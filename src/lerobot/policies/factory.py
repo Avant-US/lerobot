@@ -32,6 +32,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.groot2.configuration_groot import GrootConfig as Groot2Config #@# groot2 is a bug fix version of Groot
+from lerobot.policies.str_groot.configuration_str_groot import StrGrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -127,6 +128,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot2.modeling_groot import GrootPolicy as Groot2Policy
         return Groot2Policy
 
+    elif name == "str_groot":
+        from lerobot.policies.str_groot.modeling_str_groot import StrGrootPolicy
+        return StrGrootPolicy
+
     elif name == "xvla":
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
@@ -181,6 +186,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "str_groot":
+        return StrGrootConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
@@ -399,6 +406,14 @@ def make_pre_post_processors(
         from lerobot.policies.groot2.processor_groot import make_groot2_pre_post_processors
         #@# groot2 is a bug fix version of Groot
         processors = make_groot2_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, StrGrootConfig):
+        from lerobot.policies.str_groot.processor_str_groot import make_str_groot_pre_post_processors
+
+        processors = make_str_groot_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

@@ -46,14 +46,6 @@ python bt/ptgr00t15_3/eval_groot_n15_dataset.py \
 
 默认评估四个 suite 的全部 task。可用 `--max-tasks-per-suite` 做快速调试。
 
-```shell
-lerobot-eval \
-  --policy.path="eagle2hg-processor-groot-n1p5" \
-  --env.type=libero \
-  --env.task=libero_object,libero_spatial,libero_goal,libero_10 \
-  --eval.batch_size=1 \
-  --eval.n_episodes=10
-```
 ```
 lerobot-eval \
   --output_dir=/logs/ \
@@ -61,10 +53,54 @@ lerobot-eval \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
   --eval.n_episodes=10 \
-  --policy.type=groot2   \
+  --policy.path=lerobot/pi05_libero_finetuned   \
   --policy.n_action_steps=10 \
   --output_dir=./eval_logs/ \
   --env.max_parallel_tasks=1
 ```
+```
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.type=groot2   \
+  --policy.n_action_steps=10 \
+  --output_dir=./outputs_eval/ \
+  --env.max_parallel_tasks=1
+```
 
 
+```
+# Using a multi-GPU setup
+accelerate launch \
+  --multi_gpu \
+  --num_processes=8 \
+  $(which lerobot-train) \
+  --output_dir=./outputs \
+  --save_checkpoint=true \
+  --batch_size=32 \
+  --steps=30000 \
+  --save_freq=1000 \
+  --log_freq=100 \
+  --policy.push_to_hub=false \
+  --policy.type=groot2 \
+  --policy.repo_id=nvidia/GR00T-N1.6-3B \
+  --policy.tune_diffusion_model=false \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --wandb.enable=false \
+  --job_name=btgrt_lrb01
+  ```
+
+  # 强制重新编译安装flash-attn
+  ```
+cd /home/Luogang/SRC/Robot/lerobot && \
+export PATH="/home/Luogang/SRC/Robot/lerobot/lerobot-venv/bin:$PATH" && \
+export CUDA_HOME=/usr/local/cuda && \
+export FLASH_ATTENTION_FORCE_BUILD=TRUE && \
+export FLASH_ATTENTION_FORCE_CXX11_ABI=FALSE && \
+export MAX_JOBS=32 && \
+pip uninstall -y flash-attn && \
+pip cache remove flash_attn 2>/dev/null || true && \
+pip install 'flash-attn>=2.5.9,<3.0.0' --no-build-isolation --no-cache-dir
+```

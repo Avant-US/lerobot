@@ -180,5 +180,6 @@ outputs/
 
 # SpecStory
 .specstory/
-eval_logs
-logs
+outputs_*/
+logs/
+*-venv

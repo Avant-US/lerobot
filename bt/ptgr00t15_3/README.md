@@ -70,28 +70,151 @@ lerobot-eval \
   --env.max_parallel_tasks=1
 ```
 
+训练
+```bash
+# 后台 + 持久：nohup 忽略挂起信号，关掉 VS Code/终端后训练仍继续。
+# 原控制台日志（含 accelerate / 各 rank 的 logging）写入 /mnt/g/lrb.log。
+# 查看：tail -f /mnt/g/lrb.log   结束：kill $(cat /mnt/g/lrb_train.pid)
+export NCCL_DEBUG=TRACE
+export HF_DEBUG=1
+export TRANSFORMERS_VERBOSITY=debug
+export HF_HUB_VERBOSITY=debug
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-```
-# Using a multi-GPU setup
-accelerate launch \
+export HF_HOME="/home/Luogang/hfhome/"
+nohup accelerate launch \
   --multi_gpu \
   --num_processes=8 \
   $(which lerobot-train) \
-  --output_dir=./outputs \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/ \
   --save_checkpoint=true \
   --batch_size=32 \
   --steps=30000 \
-  --save_freq=1000 \
-  --log_freq=100 \
+  --save_freq=500 \
+  --log_freq=50 \
   --policy.push_to_hub=false \
   --policy.type=groot2 \
   --policy.repo_id=nvidia/GR00T-N1.6-3B \
   --policy.tune_diffusion_model=false \
   --dataset.repo_id=HuggingFaceVLA/libero \
-  --wandb.enable=false \
-  --job_name=btgrt_lrb01
-  ```
+  --wandb.enable=true \
+  --wandb.project=lrb_grt_1 \
+  --wandb.disable_artifact=true \
+  --job_name=r1 \
+  > /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.log 2>&1 &
+echo $! > /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.pid
+echo "训练已在后台启动，PID=$(cat /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.pid)，日志：/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.log"
 
+
+
+
+accelerate launch \
+  --multi_gpu \
+  --num_processes=8 \
+  $(which lerobot-train) \
+  --output_dir=/mnt/g/outputs_lrb_grt_1/ \
+  --save_checkpoint=true \
+  --batch_size=8 \
+  --steps=30000 \
+  --save_freq=8 \
+  --log_freq=5 \
+  --policy.push_to_hub=false \
+  --policy.type=groot2 \
+  --policy.repo_id=nvidia/GR00T-N1.6-3B \
+  --policy.tune_diffusion_model=false \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --wandb.enable=true \
+  --wandb.project=lrb_grt_1 \
+  --wandb.disable_artifact=true \
+  --job_name=btgrt_lrb02
+```
+eval时不要设置n_action_steps,以便使其的chunk_size与chekpoint中的一致.而因为lerobot-train时没指定,所以应是默认值50.
+batch_size > 1 会出问题.
+```bash
+export HF_DEBUG=1
+export TRANSFORMERS_VERBOSITY=debug
+export HF_HUB_VERBOSITY=debug
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=0
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/home/Luogang/SRC/Robot/lerobot/outputs/checkpoints/last/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=./outputs_evalspatial/
+
+
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=2
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/home/Luogang/SRC/Robot/lerobot/outputs/checkpoints/last/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=./outputs_evalobj/
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=4
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_goal \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/home/Luogang/SRC/Robot/lerobot/outputs/checkpoints/last/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=./outputs_evalgoal/
+
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=6
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/home/Luogang/SRC/Robot/lerobot/outputs/checkpoints/last/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=./outputs_eval10/
+```
   # 强制重新编译安装flash-attn
   ```
 cd /home/Luogang/SRC/Robot/lerobot && \

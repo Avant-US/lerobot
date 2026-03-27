@@ -82,11 +82,13 @@ export HF_HUB_VERBOSITY=debug
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 export HF_HOME="/home/Luogang/hfhome/"
+export BTPRJNAME="lrb_grt_1"
+export BTJOBNAME="r2"
 nohup accelerate launch \
   --multi_gpu \
   --num_processes=8 \
   $(which lerobot-train) \
-  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/ \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/ \
   --save_checkpoint=true \
   --batch_size=32 \
   --steps=30000 \
@@ -94,16 +96,16 @@ nohup accelerate launch \
   --log_freq=50 \
   --policy.push_to_hub=false \
   --policy.type=groot2 \
-  --policy.repo_id=nvidia/GR00T-N1.6-3B \
+  --policy.repo_id=nvidia/GR00T-N1.5-3B \
   --policy.tune_diffusion_model=false \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --wandb.enable=true \
-  --wandb.project=lrb_grt_1 \
+  --wandb.project=${BTPRJNAME} \
   --wandb.disable_artifact=true \
-  --job_name=r1 \
-  > /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.log 2>&1 &
-echo $! > /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.pid
-echo "训练已在后台启动，PID=$(cat /mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.pid)，日志：/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1.log"
+  --job_name=${BTJOBNAME} \
+  > /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.log 2>&1 &
+echo $! > /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.pid
+echo "训练已在后台启动，PID=$(cat /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.pid)，日志：/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.log"
 
 
 
@@ -120,7 +122,7 @@ accelerate launch \
   --log_freq=5 \
   --policy.push_to_hub=false \
   --policy.type=groot2 \
-  --policy.repo_id=nvidia/GR00T-N1.6-3B \
+  --policy.repo_id=nvidia/GR00T-N1.5-3B \
   --policy.tune_diffusion_model=false \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --wandb.enable=true \
@@ -136,6 +138,49 @@ export TRANSFORMERS_VERBOSITY=debug
 export HF_HUB_VERBOSITY=debug
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
+
+export CUDA_VISIBLE_DEVICES=7
+export BTPRJNAME="lrb_grt_1"
+export BTJOBNAME="r2"
+export MUJOCO_GL=egl
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/checkpoints/030000/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}$/eval/spatial030000/
+
+
+export CUDA_VISIBLE_DEVICES=3
+export BTPRJNAME="lrb_grt_1"
+export BTJOBNAME="r2"
+export MUJOCO_GL=egl
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/checkpoints/030000/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}$/eval/spatial030000_2/
+
+
+
 export MUJOCO_GL=egl
 export CUDA_VISIBLE_DEVICES=0
 lerobot-eval \
@@ -149,13 +194,66 @@ lerobot-eval \
   --eval.batch_size=1 \
   --eval.n_episodes=10 \
   --eval.use_async_envs=false \
-  --policy.path=/home/Luogang/SRC/Robot/lerobot/outputs/checkpoints/last/pretrained_model \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/checkpoints/030000/pretrained_model \
   --policy.device=cuda \
   --policy.use_amp=false \
   --seed=1000 \
-  --output_dir=./outputs_evalspatial/
+  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/eval/spatial030000/
 
 
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=3
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/checkpoints/030000/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/eval/spatial030000_2/
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=1
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/checkpoints/017000/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/eval/spatial017000/
+
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=5
+lerobot-eval \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.path=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/checkpoints/024000/pretrained_model \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --seed=1000 \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/lrb_grt_1_r1/eval/spatial024000/
 
 export MUJOCO_GL=egl
 export CUDA_VISIBLE_DEVICES=2

@@ -104,7 +104,8 @@ _Exported on 3/13/2026 at 14:48:21 GMT+8 from Cursor (2.6.19)_
 
 训练脚本本身也说明了它的角色不是“某个算法的 train loop”，而是全系统 orchestrator：
 
-```239:291:src/lerobot/scripts/lerobot_train.py
+```python 
+#239:291:src/lerobot/scripts/lerobot_train.py
     if is_main_process:
         logging.info("Creating policy")
     policy = make_policy(
@@ -143,7 +144,8 @@ _Exported on 3/13/2026 at 14:48:21 GMT+8 from Cursor (2.6.19)_
 
 `processor` 不是附属工具，而是 LeRobot 的核心协议层：
 
-```253:295:src/lerobot/processor/pipeline.py
+```python
+# 253:295:src/lerobot/processor/pipeline.py
 @dataclass
 class DataProcessorPipeline[TInput, TOutput](HubMixin):
     steps: Sequence[ProcessorStep] = field(default_factory=list)
@@ -157,7 +159,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
 而 policy 的输入输出也不是手工硬编码，而是从 dataset 或 env 的特征语义推断出来：
 
-```453:472:src/lerobot/policies/factory.py
+```python
+#453:472:src/lerobot/policies/factory.py
     policy_cls = get_policy_class(cfg.type)
 
     kwargs = {}
@@ -178,7 +181,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 还有两个很重要的代码观察：
 
 - `lerobot_record.py` 的真机主循环基本就是 `robot.get_observation()` -> observation processor -> teleop/policy -> action processor -> `robot.send_action()` -> `dataset.add_frame()`。这说明采集、执行和部署其实是同构的。
-- `LeRobotDataset.__getitem__()` 不是简单取一帧；它会根据 `delta_indices` 扩成时间窗、处理 episode 边界 padding，再按时间戳从视频里对齐解码。这让“历史观测”“动作 chunk”“多相机视频同步”成为数据层原生能力，而不是模型里的临时 hack。
+- `LeRobotDataset.__getitem__()` 不是简单取一帧；它会根据 `delta_indices` 扩成时间窗、处理 episode 边界 padding，再按时间戳从视频里对齐解码。这让“历史观测”“动作 chunk”“多相机视频同步”成为数据层原生能力，而不是模型里的临时 hack。#@#???
 
 ## 优点、缺点与边界
 ### 优点
@@ -226,7 +229,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
 这些图可以直接粘贴到支持 `Mermaid` 的 Markdown 环境中渲染。
 
-## 核心类图一
+## 训练/评估,核心类图
 这是“训练/评估主链路”的核心类关系图。
 
 ```mermaid
@@ -325,7 +328,7 @@ PreTrainedPolicy <|-- SACPolicy
 
 这张图反映的是：`TrainPipelineConfig` 是编排入口；`PreTrainedConfig` 决定 policy 的输入输出语义、时间窗口和训练 preset；`PreTrainedPolicy` 是统一模型接口；`EnvConfig` 则把仿真环境统一成可被训练/评估脚本消费的配置对象。
 
-## 核心类图二
+## 数据/处理器/机器人运行态,核心类图
 这是“数据/处理器/机器人运行态”的关键类关系图。
 
 ```mermaid
@@ -434,7 +437,7 @@ Teleoperator ..> Robot : teleoperate target
 
 这里最重要的一点是：`processor` 在 `LeRobot` 里不是小工具，而是核心协议层。源码中的 `PolicyProcessorPipeline` 和 `RobotProcessorPipeline` 本质上都是 `DataProcessorPipeline` 的类型别名，只是分别用于 policy I/O 和 robot I/O。
 
-## 时序图一
+## lerobot-record 时序图
 这是 `lerobot-record` 的核心采集链路，也是理解真机闭环最重要的一张图。
 
 ```mermaid
@@ -491,7 +494,7 @@ CLI->>DS: finalize()
 
 这张图体现了一个关键事实：`record`、`replay`、`real-time inference` 在结构上是同构的，都是“观测 -> processor -> 动作 -> 执行”，区别只在动作来源是 `teleop` 还是 `policy`。
 
-## 时序图二
+## lerobot-train 时序图
 这是 `lerobot-train` 的离线训练主链路。
 
 ```mermaid
@@ -507,7 +510,7 @@ participant P as PreTrainedPolicy
 participant ProcF as ProcessorFactory
 participant Pre as preprocessor
 participant DL as DataLoader
-participant Opt as OptimizerScheduler
+participant Optz as OptimizerScheduler
 participant Eval as eval_policy_all
 
 CLI->>Cfg: validate()
@@ -527,7 +530,7 @@ P-->>CLI: policy
 
 CLI->>ProcF: make_pre_post_processors(policy_cfg, dataset.meta.stats)
 ProcF-->>CLI: preprocessor, postprocessor
-CLI->>Opt: make_optimizer_and_scheduler(cfg, policy)
+CLI->>Optz: make_optimizer_and_scheduler(cfg, policy)
 CLI->>DL: DataLoader(dataset)
 
 loop 每个训练 step
@@ -538,8 +541,8 @@ loop 每个训练 step
   CLI->>P: forward(batch)
   P-->>CLI: loss, metrics
 
-  CLI->>Opt: backward()
-  CLI->>Opt: clip_grad + step + zero_grad + scheduler.step()
+  CLI->>Optz: backward()
+  CLI->>Optz: clip_grad + step + zero_grad + scheduler.step()
 
   opt 达到 log / save / eval 周期
     CLI->>Eval: eval_policy_all(policy, env, processors)
@@ -552,10 +555,10 @@ CLI->>P: save_pretrained() / push_model_to_hub()
 
 这张图最值得注意的是两点：
 
-- `dataset` 的时间窗口不是手写在模型里，而是由 `policy config` 的 `delta_indices` 反推到 `LeRobotDataset`
-- `preprocessor/postprocessor` 与模型一起构成可部署 artifact，而不是临时脚本逻辑
+- `dataset` 的时间窗口不是手写在模型里，而是由 `policy config` 的 `delta_indices` 反推到 `LeRobotDataset` @#???
+- `preprocessor/postprocessor` 与模型一起构成可部署 artifact，而不是临时脚本逻辑  @#???
 
-## 时序图三
+## lerobot-eval 时序图
 这是 `lerobot-eval` 的 rollout 链路，也最能体现 `env processor + policy processor` 的双层处理结构。
 
 ```mermaid
@@ -606,7 +609,7 @@ CLI->>CLI: aggregate success / reward / optional videos
 
 这里反映出 `LeRobot` 的一个重要设计：环境自己的原始 observation 先被拉平到 `LeRobot` 统一语义，再进入 policy 专属预处理；所以它能在 `LIBERO`、`MetaWorld`、`IsaacLab Arena` 和真机数据之间尽量共享统一的 policy 接口。
 
-## 时序图四
+## async_inference 时序图
 这是 `async_inference` 的异步推理链路，它是 `LeRobot` 和很多只会本地推理的机器人库相比，一个很有辨识度的模块。
 
 ```mermaid

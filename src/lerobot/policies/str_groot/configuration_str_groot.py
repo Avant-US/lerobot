@@ -61,6 +61,8 @@ class StrGrootConfig(PreTrainedConfig):
 
     # --- Training flags ---
     freeze_vlm: bool = False
+    tune_vlm: bool | None = None
+    tune_action_head: bool = True
     use_bf16: bool = True
 
     # --- StarVLA pretrained checkpoint (local path or HF repo id) ---
@@ -68,6 +70,8 @@ class StrGrootConfig(PreTrainedConfig):
 
     # --- Optimizer ---
     optimizer_lr: float = 1e-4
+    optimizer_lr_action_head: float | None = None
+    optimizer_lr_vlm: float | None = None
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-5
@@ -77,6 +81,20 @@ class StrGrootConfig(PreTrainedConfig):
         super().__post_init__()
         self.chunk_size = self.future_action_window_size + 1
         self.n_action_steps = self.chunk_size
+
+        # Keep backward compatibility with old `freeze_vlm` while exposing
+        # explicit fine-tuning controls used by `get_optim_params`.
+        if self.tune_vlm is None:
+            self.tune_vlm = not self.freeze_vlm
+        self.freeze_vlm = not self.tune_vlm
+
+        if self.optimizer_lr_action_head is None:
+            self.optimizer_lr_action_head = self.optimizer_lr
+        if self.optimizer_lr_vlm is None:
+            self.optimizer_lr_vlm = self.optimizer_lr * 0.1
+
+        if not self.tune_vlm and not self.tune_action_head:
+            raise ValueError("Both tune_vlm and tune_action_head are False. No trainable parameters left.")
 
     def validate_features(self) -> None:
         image_features = [k for k, f in self.input_features.items() if f.type == FeatureType.VISUAL]

@@ -107,28 +107,36 @@ nohup accelerate launch \
 echo $! > /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.pid
 echo "训练已在后台启动，PID=$(cat /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.pid)，日志：/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}.log"
 
+# 如果从chkp继续训练
 
-
-
-accelerate launch \
+export HF_HOME="/home/Luogang/hfhome/"
+export BTPRJNAME="lrb_grt_1"
+export BTJOBNAME="r2"
+nohup accelerate launch \
   --multi_gpu \
   --num_processes=8 \
   $(which lerobot-train) \
-  --output_dir=/mnt/g/outputs_lrb_grt_1/ \
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/ \
   --save_checkpoint=true \
-  --batch_size=8 \
-  --steps=30000 \
-  --save_freq=8 \
-  --log_freq=5 \
+  --batch_size=32 \
+  --steps=40000 \
+  --save_freq=500 \
+  --log_freq=50 \
   --policy.push_to_hub=false \
   --policy.type=groot2 \
   --policy.repo_id=nvidia/GR00T-N1.5-3B \
   --policy.tune_diffusion_model=false \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --wandb.enable=true \
-  --wandb.project=lrb_grt_1 \
+  --wandb.project=${BTPRJNAME} \
   --wandb.disable_artifact=true \
-  --job_name=btgrt_lrb02
+  --resume=true \
+  --config_path=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/checkpoints/030000/pretrained_model/train_config.json \
+  --job_name=${BTJOBNAME} \
+  > /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}_4k.log 2>&1 &
+echo $! > /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}_4k.pid
+echo "训练已在后台启动，PID=$(cat /mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}_4k.pid)，日志：/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}_4k.log"
+
 ```
 eval时不要设置n_action_steps,以便使其的chunk_size与chekpoint中的一致.而因为lerobot-train时没指定,所以应是默认值50.
 batch_size > 1 会出问题.
@@ -158,7 +166,7 @@ lerobot-eval \
   --policy.device=cuda \
   --policy.use_amp=false \
   --seed=1000 \
-  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}$/eval/spatial030000/
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/eval/spatial030000/
 
 
 export CUDA_VISIBLE_DEVICES=3
@@ -177,7 +185,7 @@ lerobot-eval \
   --policy.device=cuda \
   --policy.use_amp=false \
   --seed=1000 \
-  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}$/eval/spatial030000_2/
+  --output_dir=/mnt/g/CKPT/VLA/Libero/${BTPRJNAME}_${BTJOBNAME}/eval/spatial030000_2/
 
 
 
@@ -324,4 +332,51 @@ export MAX_JOBS=32 && \
 pip uninstall -y flash-attn && \
 pip cache remove flash_attn 2>/dev/null || true && \
 pip install 'flash-attn>=2.5.9,<3.0.0' --no-build-isolation --no-cache-dir
+```
+
+NVCC_THREADS=2   \
+FLASH_ATTN_CUDA_ARCHS="80;90"   \
+TORCH_CUDA_ARCH_LIST="8.0;9.0" \
+FLASH_ATTENTION_FORCE_BUILD=TRUE \
+MAX_JOBS=32 \
+pip install flash-attn==2.8.3 \
+    --no-build-isolation \
+    --no-cache-dir \
+    --no-binary flash-attn \
+    --force-reinstall \
+    --verbose
+
+# 做阵列并挂载
+
+32快磁盘做一个RAID
+```
+sudo mdadm --create --verbose /dev/md0 --level=0 --raid-devices=32 \
+/dev/nvme0n1 /dev/nvme1n1 /dev/nvme2n1 /dev/nvme3n1 \
+/dev/nvme4n1 /dev/nvme5n1 /dev/nvme6n1 /dev/nvme7n1 \
+/dev/nvme8n1 /dev/nvme9n1 /dev/nvme10n1 /dev/nvme11n1 \
+/dev/nvme12n1 /dev/nvme13n1 /dev/nvme14n1 /dev/nvme15n1 \
+/dev/nvme16n1 /dev/nvme17n1 /dev/nvme18n1 /dev/nvme19n1 \
+/dev/nvme20n1 /dev/nvme21n1 /dev/nvme22n1 /dev/nvme23n1 \
+/dev/nvme24n1 /dev/nvme25n1 /dev/nvme26n1 /dev/nvme27n1 \
+/dev/nvme28n1 /dev/nvme29n1 /dev/nvme31n1 /dev/nvme32n1
+```
+格式化RAID
+```
+sudo mkfs.ext4 -F /dev/md0
+```
+挂载RAID
+```
+# 创建挂载目录
+sudo mkdir -p /mnt/r
+# 挂载设备
+sudo mount /dev/md0 /mnt/r
+# 授予写入权限
+sudo chmod 777 -R /mnt/r
+```
+配置自动挂载
+```
+# 备份 fstab
+sudo cp /etc/fstab /etc/fstab.backup
+# 添加自动挂载条目
+echo UUID=`sudo blkid -s UUID -o value /dev/md0` /mnt/r ext4 defaults,nofail,discard 0 2 | sudo tee -a /etc/fstab
 ```

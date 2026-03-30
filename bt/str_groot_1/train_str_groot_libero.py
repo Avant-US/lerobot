@@ -10,7 +10,7 @@
 
   # 正式训练
   python bt/str_groot_1/train_str_groot_libero.py --steps 50000 --batch-size 8
-  python bt/str_groot_1/train_str_groot_libero.py   --episodes 0 1 3 4 11 12 13 15 16 18 24 25 27 28 29 30 32 35 36 37 --state-indices 0 1 2 3 4 5 7  --steps 1000   --batch-size 8 --num-workers 0
+  python bt/str_groot_1/train_str_groot_libero.py   --episodes 0 1 3 4 11 12 13 15 16 18 24 25 27 28 29 30 32 35 36 37 --state-indices 0 1 2 3 4 5 7  --steps 100   --batch-size 8 --num-workers 8
 """
 
 from __future__ import annotations

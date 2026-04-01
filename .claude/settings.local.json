@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"def main\" /d/SRC/Robot/lerobot/src/lerobot/scripts/*.py)",
+      "Bash(git -C /d/SRC/Robot/lerobot log --oneline -10)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:robotwin-platform.github.io)",
+      "WebFetch(domain:arxiv.org)"
+    ]
+  }
+}

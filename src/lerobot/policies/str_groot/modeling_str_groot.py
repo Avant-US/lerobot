@@ -7,7 +7,6 @@ import os
 import sys
 import types
 from collections import deque
-from copy import deepcopy
 from pathlib import Path
 from typing import TypeVar
 
@@ -62,17 +61,6 @@ if "deployment" not in sys.modules:
     ]:
         sys.modules[_name] = _mod
 
-# Some StarVLA modules import `qwen_vl_utils` even when not using it in
-# runtime paths required by StrGroot. Provide a small compatibility shim.
-if "qwen_vl_utils" not in sys.modules:
-    _qwen_vl_utils = types.ModuleType("qwen_vl_utils")
-
-    def _process_vision_info(*args, **kwargs):
-        return None, None
-
-    _qwen_vl_utils.process_vision_info = _process_vision_info
-    sys.modules["qwen_vl_utils"] = _qwen_vl_utils
-
 
 class StrGrootPolicy(PreTrainedPolicy):
     """LeRobot policy wrapper around StarVLA's Qwen_GR00T."""
@@ -94,90 +82,11 @@ class StrGrootPolicy(PreTrainedPolicy):
         if config.starvla_checkpoint:
             self._load_starvla_checkpoint(config.starvla_checkpoint)
 
-        self._set_trainable_parameters()
+        if config.freeze_vlm:
+            for p in self._starvla_model.qwen_vl_interface.parameters():
+                p.requires_grad = False
 
         self.reset()
-
-    @classmethod
-    def from_pretrained(
-        cls: type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: StrGrootConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = False,
-        **kwargs,
-    ) -> T:
-        """Load from a LeRobot checkpoint without re-loading StarVLA base checkpoint."""
-        if config is None:
-            from lerobot.configs.policies import PreTrainedConfig
-
-            loaded_config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-            if not isinstance(loaded_config, StrGrootConfig):
-                raise TypeError(
-                    f"Expected StrGrootConfig, but got {type(loaded_config).__name__} from pretrained config."
-                )
-            config = loaded_config
-
-        # `model.safetensors` already contains the model parameters, so avoid
-        # an extra (and potentially very large) StarVLA checkpoint load first.
-        config = deepcopy(config)
-        if config.starvla_checkpoint:
-            logger.info(
-                "Loading StrGroot from pretrained checkpoint: skipping `starvla_checkpoint=%s` bootstrap load.",
-                config.starvla_checkpoint,
-            )
-            config.starvla_checkpoint = None
-
-        return super().from_pretrained(
-            pretrained_name_or_path=pretrained_name_or_path,
-            config=config,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-            strict=strict,
-            **kwargs,
-        )
-
-    def _set_trainable_parameters(self) -> None:
-        vlm_trainable = bool(self.config.tune_vlm)
-        action_trainable = bool(self.config.tune_action_head)
-
-        for p in self._starvla_model.qwen_vl_interface.parameters():
-            p.requires_grad = vlm_trainable
-
-        for p in self._starvla_model.action_model.parameters():
-            p.requires_grad = action_trainable
-
-        n_vlm_trainable = sum(p.numel() for p in self._starvla_model.qwen_vl_interface.parameters() if p.requires_grad)
-        n_action_trainable = sum(
-            p.numel() for p in self._starvla_model.action_model.parameters() if p.requires_grad
-        )
-        logger.info(
-            "StrGroot trainable params: vlm=%s action_head=%s",
-            f"{n_vlm_trainable:,}",
-            f"{n_action_trainable:,}",
-        )
 
     # ------------------------------------------------------------------
     # StarVLA OmegaConf config builder
@@ -296,73 +205,16 @@ class StrGrootPolicy(PreTrainedPolicy):
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
 
     def get_optim_params(self):
-        vlm_params: list[Tensor] = []
-        action_params: list[Tensor] = []
-        other_params: list[Tensor] = []
-
-        for name, param in self.named_parameters():
-            if not param.requires_grad:
-                continue
-            if name.startswith("_starvla_model.qwen_vl_interface"):
-                vlm_params.append(param)
-            elif name.startswith("_starvla_model.action_model"):
-                action_params.append(param)
-            else:
-                other_params.append(param)
-
-        if not vlm_params and not action_params and not other_params:
-            raise ValueError("No trainable parameters found for StrGroot policy.")
-
-        param_groups: list[dict[str, object]] = []
-        if action_params:
-            param_groups.append(
-                {
-                    "params": action_params,
-                    "lr": float(self.config.optimizer_lr_action_head),
-                }
-            )
-        if vlm_params:
-            param_groups.append(
-                {
-                    "params": vlm_params,
-                    "lr": float(self.config.optimizer_lr_vlm),
-                }
-            )
-        if other_params:
-            # Treat uncategorized trainable modules as action-head side modules.
-            param_groups.append(
-                {
-                    "params": other_params,
-                    "lr": float(self.config.optimizer_lr_action_head),
-                }
-            )
-
-        return param_groups
+        return self.parameters()
 
     # ------------------------------------------------------------------
     # Training forward
     # ------------------------------------------------------------------
-    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         examples = self._batch_to_examples(batch, inference=False)
-        if reduction == "none":
-            # StarVLA currently returns a reduced scalar loss. For RA-BC we need
-            # per-sample loss, so we compute one forward pass per sample.
-            per_sample_losses: list[Tensor] = []
-            for ex in examples:
-                outputs = self._starvla_model.forward([ex])
-                loss = outputs["action_loss"]
-                if not torch.is_tensor(loss):
-                    loss = torch.as_tensor(loss, device=next(self.parameters()).device, dtype=torch.float32)
-                per_sample_losses.append(loss.reshape(()))
-            per_sample_loss = torch.stack(per_sample_losses, dim=0)
-            return per_sample_loss, {"loss": per_sample_loss.mean().item()}
-
-        if reduction != "mean":
-            raise ValueError(f"Unsupported reduction '{reduction}'. Expected 'mean' or 'none'.")
-
         outputs = self._starvla_model.forward(examples)
         loss = outputs["action_loss"]
-        return loss, {"loss": float(loss.item())}
+        return loss, {"loss": loss.item()}
 
     # ------------------------------------------------------------------
     # Inference

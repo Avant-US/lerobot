@@ -1,0 +1,32 @@
+{
+  "env": {
+    "name": "gym_hil",
+    "task": "PandaPickCubeKeyboardManualSafe-v0",
+    "fps": 10,
+    "robot": null,
+    "teleop": null,
+    "processor": {
+      "control_mode": "keyboard",
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": 0.0
+      },
+      "reset": {
+        "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
+        "reset_time_s": 0.5,
+        "control_time_s": 300.0,
+        "terminate_on_success": false
+      }
+    }
+  },
+  "dataset": {
+    "repo_id": "local/interactive_keyboard_safe_demo",
+    "root": "./bt/hil/output/interactive_keyboard_safe_dataset",
+    "task": "pick_cube_manual_safe",
+    "num_episodes_to_record": 5,
+    "replay_episode": null,
+    "push_to_hub": false
+  },
+  "mode": "record",
+  "device": "cpu"
+}

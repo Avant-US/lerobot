@@ -892,7 +892,7 @@ participant P as PreTrainedPolicy
 participant ProcF as ProcessorFactory
 participant Pre as preprocessor
 participant DL as DataLoader
-participant Opt as OptimizerScheduler
+participant Optz as OptimizerScheduler
 participant Eval as eval_policy_all
 
 CLI->>Cfg: validate()
@@ -912,7 +912,7 @@ P-->>CLI: policy
 
 CLI->>ProcF: make_pre_post_processors(policy_cfg, dataset.meta.stats)
 ProcF-->>CLI: preprocessor, postprocessor
-CLI->>Opt: make_optimizer_and_scheduler(cfg, policy)
+CLI->>Optz: make_optimizer_and_scheduler(cfg, policy)
 CLI->>DL: DataLoader(dataset)
 
 loop 每个训练 step
@@ -923,8 +923,8 @@ loop 每个训练 step
   CLI->>P: forward(batch)
   P-->>CLI: loss, metrics
 
-  CLI->>Opt: backward()
-  CLI->>Opt: clip_grad + step + zero_grad + scheduler.step()
+  CLI->>Optz: backward()
+  CLI->>Optz: clip_grad + step + zero_grad + scheduler.step()
 
   opt 达到 log / save / eval 周期
     CLI->>Eval: eval_policy_all(policy, env, processors)

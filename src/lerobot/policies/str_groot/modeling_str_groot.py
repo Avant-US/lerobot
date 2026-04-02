@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
-import types
 from collections import deque
-from pathlib import Path
 from typing import TypeVar
 
-import numpy as np
 import torch
-from PIL import Image
 from torch import Tensor
 from torchvision.transforms.functional import to_pil_image
 
@@ -22,44 +17,6 @@ from lerobot.policies.str_groot.configuration_str_groot import StrGrootConfig
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="StrGrootPolicy")
-
-# ---------------------------------------------------------------------------
-# Ensure StarVLA package is importable from the project root
-# ---------------------------------------------------------------------------
-_project_root = Path(__file__).resolve().parents[4]  # .../src/lerobot/policies/str_groot -> project root
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
-
-# StarVLA's QwenGR00T.py does `from deployment.model_server.tools.image_tools
-# import to_pil_preserve`.  That module lives inside the starVLA repo checkout
-# which may not be on the path.  Provide a lightweight mock so the import
-# succeeds without the full deployment package.
-if "deployment" not in sys.modules:
-    _d = types.ModuleType("deployment")
-    _ms = types.ModuleType("deployment.model_server")
-    _tl = types.ModuleType("deployment.model_server.tools")
-    _it = types.ModuleType("deployment.model_server.tools.image_tools")
-
-    def _to_pil_preserve(img):
-        if isinstance(img, Image.Image):
-            return img
-        if isinstance(img, np.ndarray):
-            return Image.fromarray(img.astype(np.uint8))
-        if isinstance(img, list):
-            return [_to_pil_preserve(i) for i in img]
-        return img
-
-    _it.to_pil_preserve = _to_pil_preserve
-    _tl.image_tools = _it
-    _ms.tools = _tl
-    _d.model_server = _ms
-    for _name, _mod in [
-        ("deployment", _d),
-        ("deployment.model_server", _ms),
-        ("deployment.model_server.tools", _tl),
-        ("deployment.model_server.tools.image_tools", _it),
-    ]:
-        sys.modules[_name] = _mod
 
 
 class StrGrootPolicy(PreTrainedPolicy):

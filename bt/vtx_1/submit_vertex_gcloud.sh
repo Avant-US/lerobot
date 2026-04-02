@@ -2,21 +2,21 @@
 # =============================================================================
 # 使用 gcloud CLI 提交 Vertex AI 分布式训练作业
 #
-# 适用场景：不想安装 Python SDK，直接用 gcloud 命令行提交。
+# 适用场景: 不想安装 Python SDK, 直接用 gcloud 命令行提交.
 #
 # 用法:
-#   # 单节点 8xA100（默认配置）
+#   # 单节点 8xA100 (默认配置)
 #   bash bt/vtx_1/submit_vertex_gcloud.sh
 #
 #   # 2 节点 x 8xA100
 #   NUM_NODES=2 bash bt/vtx_1/submit_vertex_gcloud.sh
 #
-#   # 自定义所有参数
+#   # 自定义参数
 #   GCP_PROJECT=my-proj GCP_REGION=us-central1 NUM_NODES=4 GPU_COUNT=8 \
 #   STEPS=50000 BATCH_SIZE=64 \
 #     bash bt/vtx_1/submit_vertex_gcloud.sh
 #
-#   # dry-run（只打印，不执行）
+#   # dry-run (只打印, 不执行)
 #   DRY_RUN=1 bash bt/vtx_1/submit_vertex_gcloud.sh
 # =============================================================================
 
@@ -55,7 +55,6 @@ GCS_OUTPUT="${GCS_OUTPUT:-}"
 # --- WandB ---
 WANDB_ENABLE="${WANDB_ENABLE:-false}"
 WANDB_PROJECT="${WANDB_PROJECT:-str_groot_vertex}"
-WANDB_KEY="${WANDB_API_KEY:-}"
 
 # --- 其他 ---
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
@@ -93,11 +92,7 @@ if [[ "${WANDB_ENABLE}" == "true" ]]; then
     CONTAINER_ARGS+=("--wandb" "--wandb-project=${WANDB_PROJECT}")
 fi
 
-# --- 构建 worker pool spec JSON ---
-# Vertex AI gcloud 使用 --worker-pool-spec 格式
-# 格式: machine-type=X,accelerator-type=Y,accelerator-count=Z,replica-count=N,container-image-uri=URI
-
-# Primary worker pool (workerpool0)
+# --- 构建 worker pool spec ---
 PRIMARY_SPEC="machine-type=${MACHINE_TYPE}"
 PRIMARY_SPEC+=",accelerator-type=${GPU_TYPE}"
 PRIMARY_SPEC+=",accelerator-count=${GPU_COUNT}"
@@ -127,7 +122,7 @@ if [[ -n "${SERVICE_ACCOUNT}" ]]; then
     CMD+=(--service-account="${SERVICE_ACCOUNT}")
 fi
 
-# 添加容器参数（通过 --args 传递）
+# 添加容器参数 (通过 --args 传递)
 ARGS_STR=""
 for arg in "${CONTAINER_ARGS[@]}"; do
     if [[ -n "${ARGS_STR}" ]]; then
@@ -158,7 +153,7 @@ echo "============================================"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
     echo ""
-    echo "DRY RUN — 不执行。"
+    echo "DRY RUN - 不执行。"
     exit 0
 fi
 

@@ -10,13 +10,13 @@
 #   bash bt/vtx_1/build_docker.sh --push
 #
 #   # 自定义项目/区域/镜像名
-#   GCP_PROJECT=my-project GCP_REGION=us-central1 IMAGE_NAME=my-image \
+#   GCP_PROJECT=my-project GCP_REGION=us-central1 \
 #     bash bt/vtx_1/build_docker.sh --push
 # =============================================================================
 
 set -euo pipefail
 
-# --- 配置（可通过环境变量覆盖）---
+# --- 配置 (可通过环境变量覆盖) ---
 GCP_PROJECT="${GCP_PROJECT:-your-gcp-project-id}"
 GCP_REGION="${GCP_REGION:-us-central1}"
 REPO_NAME="${REPO_NAME:-lerobot-training}"
@@ -83,5 +83,5 @@ fi
 echo ""
 echo "============================================"
 echo "  本地测试命令:"
-echo "  docker run --gpus all ${LOCAL_IMAGE} --local-test --steps 2 --batch-size 1"
+echo "  docker run --gpus all ${LOCAL_IMAGE} --local-test --steps 2 --batch-size 1 --starvla-checkpoint \"\""
 echo "============================================"

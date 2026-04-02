@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """
-Vertex AI 分布式训练入口脚本。
+Vertex AI 分布式训练入口脚本 — StrGroot (StarVLA Qwen3-VL + GR00T FlowMatching)
 
-在 Vertex AI CustomJob 中运行时，Vertex AI 会设置以下环境变量：
+在 Vertex AI CustomJob 中运行时, Vertex AI 会设置以下环境变量:
   - CLUSTER_SPEC: JSON 格式的集群拓扑信息
-  - TF_CONFIG: TensorFlow 风格的集群配置（PyTorch 也可用于解析）
-  - MASTER_ADDR / MASTER_PORT: torchrun 需要的主节点信息
+  - TF_CONFIG: TensorFlow 风格的集群配置 (PyTorch 也可用于解析)
 
-本脚本：
-  1. 解析 Vertex AI 提供的环境变量，设置 PyTorch 分布式所需的 env vars
-  2. 通过 accelerate launch 或 torchrun 启动 lerobot-train
-  3. 训练完成后将 checkpoint 上传到 GCS
+本脚本:
+  1. 解析 Vertex AI 提供的环境变量, 设置 PyTorch 分布式所需的 MASTER_ADDR / MASTER_PORT 等
+  2. 通过 accelerate launch 启动 lerobot-train (多卡/多节点时)
+  3. 训练完成后将 checkpoint 上传到 GCS (仅主节点)
 
-用法（Vertex AI 容器内自动调用）：
-  python train_vertex.py [--所有参数见下方]
+用法 (Vertex AI 容器内自动调用):
+  python train_vertex.py [参数]
 
-也可本地测试：
-  python train_vertex.py --local-test --steps 2 --batch-size 1
+本地测试:
+  python train_vertex.py --local-test --steps 2 --batch-size 1 --starvla-checkpoint ""
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ import logging
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,8 +35,12 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
+# ======================================================================
+# Vertex AI 集群拓扑解析
+# ======================================================================
+
 def parse_vertex_cluster_spec() -> dict:
-    """解析 Vertex AI 的 CLUSTER_SPEC 环境变量，返回分布式训练参数。"""
+    """解析 Vertex AI 的 CLUSTER_SPEC 或 TF_CONFIG 环境变量, 返回分布式训练参数."""
     cluster_spec_str = os.environ.get("CLUSTER_SPEC", "")
     tf_config_str = os.environ.get("TF_CONFIG", "")
 
@@ -59,10 +61,8 @@ def parse_vertex_cluster_spec() -> dict:
             cluster = spec.get("cluster", {})
             task = spec.get("task", {})
 
-            # 获取所有 worker 列表
             workers = cluster.get("workerpool0", [])
             if not workers:
-                # 有时 key 是 "worker"
                 workers = cluster.get("worker", [])
 
             if len(workers) > 1:
@@ -70,7 +70,6 @@ def parse_vertex_cluster_spec() -> dict:
                 result["num_nodes"] = len(workers)
                 result["world_size"] = len(workers)
                 result["node_rank"] = task.get("index", 0)
-                # 主节点是第一个 worker
                 master = workers[0]
                 if ":" in master:
                     result["master_addr"] = master.split(":")[0]
@@ -80,7 +79,7 @@ def parse_vertex_cluster_spec() -> dict:
         except json.JSONDecodeError:
             LOGGER.warning("无法解析 CLUSTER_SPEC: %s", cluster_spec_str)
 
-    # 如果没有 CLUSTER_SPEC，尝试 TF_CONFIG
+    # 如果没有 CLUSTER_SPEC, 尝试 TF_CONFIG
     elif tf_config_str:
         try:
             tf_config = json.loads(tf_config_str)
@@ -122,7 +121,7 @@ def parse_vertex_cluster_spec() -> dict:
 
 
 def get_gpu_count() -> int:
-    """获取当前节点的 GPU 数量。"""
+    """获取当前节点的 GPU 数量."""
     try:
         import torch
         count = torch.cuda.device_count()
@@ -131,10 +130,14 @@ def get_gpu_count() -> int:
         return 1
 
 
+# ======================================================================
+# GCS 上传
+# ======================================================================
+
 def upload_to_gcs(local_dir: str, gcs_path: str) -> None:
-    """将本地目录上传到 GCS。"""
+    """将本地目录上传到 GCS."""
     if not gcs_path.startswith("gs://"):
-        LOGGER.info("GCS 路径未指定或无效，跳过上传: %s", gcs_path)
+        LOGGER.info("GCS 路径未指定或无效, 跳过上传: %s", gcs_path)
         return
     LOGGER.info("上传 checkpoint 到 GCS: %s -> %s", local_dir, gcs_path)
     try:
@@ -147,20 +150,25 @@ def upload_to_gcs(local_dir: str, gcs_path: str) -> None:
         LOGGER.error("GCS 上传失败: %s", e)
 
 
+# ======================================================================
+# 构建 lerobot-train 参数
+# ======================================================================
+
 def build_lerobot_train_args(args) -> list[str]:
-    """构建 lerobot-train 的命令行参数。"""
+    """构建 lerobot-train 的命令行参数, 与 bt/str_groot_1/readme.md 中的 CLI 用法一致."""
     train_args = [
-        f"--policy.type=str_groot",
-        f"--policy.push_to_hub=false",
-        f"--policy.device=cuda",
+        "--policy.type=str_groot",
+        "--policy.push_to_hub=false",
+        "--policy.device=cuda",
         f"--policy.freeze_vlm={str(args.freeze_vlm).lower()}",
         f"--policy.tune_vlm={str(not args.freeze_vlm).lower()}",
-        f"--policy.tune_action_head=true",
+        "--policy.tune_action_head=true",
+        f"--policy.attn_implementation={args.attn_implementation}",
         f"--dataset.repo_id={args.dataset_repo}",
         f"--steps={args.steps}",
         f"--batch_size={args.batch_size}",
         f"--num_workers={args.num_workers}",
-        f"--eval_freq=0",
+        "--eval_freq=0",
         f"--log_freq={args.log_freq}",
         f"--save_checkpoint={str(args.save_checkpoint).lower()}",
         f"--save_freq={args.save_freq}",
@@ -168,47 +176,56 @@ def build_lerobot_train_args(args) -> list[str]:
         f"--job_name={args.job_name}",
     ]
 
+    # StarVLA checkpoint
     if args.starvla_checkpoint:
         train_args.append(f"--policy.starvla_checkpoint={args.starvla_checkpoint}")
 
+    # state_indices (如 [0,1,2,3,4,5,7] 跳过 pad 维度 6)
     if args.state_indices:
         indices_str = "[" + ",".join(str(i) for i in args.state_indices) + "]"
         train_args.append(f"--policy.state_indices={indices_str}")
 
-    if args.attn_implementation:
-        train_args.append(f"--policy.attn_implementation={args.attn_implementation}")
-
+    # WandB
     if args.wandb:
         train_args.extend([
-            f"--wandb.enable=true",
+            "--wandb.enable=true",
             f"--wandb.project={args.wandb_project}",
-            f"--wandb.disable_artifact=true",
+            "--wandb.disable_artifact=true",
         ])
         if args.wandb_entity:
             train_args.append(f"--wandb.entity={args.wandb_entity}")
 
+    # Resume
     if args.resume:
         train_args.append("--resume=true")
         if args.config_path:
             train_args.append(f"--config_path={args.config_path}")
 
+    # Learning rate
     if args.lr:
         train_args.append(f"--policy.optimizer_lr={args.lr}")
 
     return train_args
 
 
+# ======================================================================
+# Main
+# ======================================================================
+
 def main():
     import argparse
 
-    p = argparse.ArgumentParser(description="Vertex AI 分布式训练入口")
+    p = argparse.ArgumentParser(description="Vertex AI 分布式训练入口 — StrGroot")
 
     # --- 训练参数 ---
     p.add_argument("--dataset-repo", default="HuggingFaceVLA/libero")
-    p.add_argument("--starvla-checkpoint", default="StarVLA/Qwen3VL-GR00T-Bridge-RT-1")
-    p.add_argument("--state-indices", type=int, nargs="*", default=[0, 1, 2, 3, 4, 5, 7])
+    p.add_argument("--starvla-checkpoint", default="StarVLA/Qwen3VL-GR00T-Bridge-RT-1",
+                    help="StarVLA 预训练 checkpoint (HF repo id 或本地路径, 空字符串跳过)")
+    p.add_argument("--state-indices", type=int, nargs="*", default=[0, 1, 2, 3, 4, 5, 7],
+                    help="从数据集 state 中选取的维度索引 (跳过 pad 维度 6)")
     p.add_argument("--attn-implementation", default="flash_attention_2")
-    p.add_argument("--freeze-vlm", action="store_true", default=True)
+    p.add_argument("--freeze-vlm", action="store_true", default=True,
+                    help="冻结 VLM backbone, 仅训练 action head")
     p.add_argument("--no-freeze-vlm", dest="freeze_vlm", action="store_false")
     p.add_argument("--steps", type=int, default=30000)
     p.add_argument("--batch-size", type=int, default=32)
@@ -231,10 +248,12 @@ def main():
     p.add_argument("--wandb-entity", default=None)
 
     # --- GCS ---
-    p.add_argument("--gcs-output", default="", help="GCS 路径，训练结束后上传 checkpoint")
+    p.add_argument("--gcs-output", default="",
+                    help="GCS 路径, 训练结束后上传 checkpoint (如 gs://bucket/path)")
 
     # --- 测试 ---
-    p.add_argument("--local-test", action="store_true", help="本地单卡测试模式")
+    p.add_argument("--local-test", action="store_true",
+                    help="本地单卡测试模式 (不解析集群拓扑, 直接调用 lerobot-train)")
 
     args = p.parse_args()
 
@@ -255,10 +274,10 @@ def main():
 
     # 4) 决定启动方式
     if args.local_test:
-        # 本地测试：直接调用 lerobot-train
+        # 本地测试: 直接调用
         cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_train"] + lerobot_args
     elif cluster["is_distributed"] or nproc_per_node > 1:
-        # 分布式训练：使用 accelerate launch
+        # 分布式训练: accelerate launch
         cmd = [
             sys.executable, "-m", "accelerate.commands.launch",
             "--multi_gpu",
@@ -278,7 +297,7 @@ def main():
     # 5) 执行训练
     result = subprocess.run(cmd)
 
-    # 6) 上传到 GCS（仅主节点）
+    # 6) 上传到 GCS (仅主节点)
     if cluster["node_rank"] == 0 and args.gcs_output:
         upload_to_gcs(args.output_dir, args.gcs_output)
 

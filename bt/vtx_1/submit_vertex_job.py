@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-提交 Vertex AI CustomJob 进行 StrGroot 分布式训练。
+提交 Vertex AI CustomJob 进行 StrGroot 分布式训练.
 
-使用 Vertex AI Python SDK 创建和提交自定义训练作业。
-支持单节点多卡和多节点多卡分布式训练。
+使用 Vertex AI Python SDK 创建和提交自定义训练作业.
+支持单节点多卡和多节点多卡分布式训练.
 
 用法:
   # 单节点 8xA100 训练
@@ -15,12 +15,12 @@
   # 自定义参数
   python bt/vtx_1/submit_vertex_job.py \
     --num-nodes 4 \
-    --gpu-type NVIDIA_A100_80GB \
+    --gpu-type A100_80GB \
     --gpu-count 8 \
     --steps 50000 \
     --batch-size 64
 
-  # dry-run 模式（只打印配置，不提交）
+  # dry-run 模式 (只打印配置, 不提交)
   python bt/vtx_1/submit_vertex_job.py --dry-run
 """
 
@@ -66,25 +66,28 @@ def parse_args():
     p = argparse.ArgumentParser(description="提交 Vertex AI StrGroot 训练作业")
 
     # --- GCP 配置 ---
-    p.add_argument("--project", default=None, help="GCP 项目 ID（默认使用 gcloud 当前项目）")
+    p.add_argument("--project", default=None,
+                    help="GCP 项目 ID (默认使用 gcloud 当前项目)")
     p.add_argument("--region", default="us-central1", help="Vertex AI 区域")
     p.add_argument("--staging-bucket", default=None, help="GCS staging bucket (gs://...)")
 
     # --- 镜像 ---
-    p.add_argument("--image-uri", default=None, help="完整镜像 URI（覆盖自动构建的 URI）")
+    p.add_argument("--image-uri", default=None,
+                    help="完整镜像 URI (覆盖自动构建的 URI)")
     p.add_argument("--repo-name", default="lerobot-training")
     p.add_argument("--image-name", default="str-groot-vertex")
     p.add_argument("--image-tag", default="latest")
 
     # --- 计算资源 ---
     p.add_argument("--num-nodes", type=int, default=1, help="训练节点数")
-    p.add_argument("--machine-type", default=None, help="机器类型（自动根据 GPU 推断）")
+    p.add_argument("--machine-type", default=None,
+                    help="机器类型 (自动根据 GPU 推断)")
     p.add_argument("--gpu-type", default="A100_80GB", choices=list(GPU_TYPES.keys()),
                     help="GPU 类型简称")
     p.add_argument("--gpu-count", type=int, default=8, help="每节点 GPU 数")
     p.add_argument("--boot-disk-size-gb", type=int, default=200)
 
-    # --- 训练参数（传递给容器）---
+    # --- 训练参数 (传递给容器) ---
     p.add_argument("--dataset-repo", default="HuggingFaceVLA/libero")
     p.add_argument("--starvla-checkpoint", default="StarVLA/Qwen3VL-GR00T-Bridge-RT-1")
     p.add_argument("--state-indices", default="0,1,2,3,4,5,7")
@@ -99,7 +102,8 @@ def parse_args():
     p.add_argument("--job-name-prefix", default="str-groot")
 
     # --- GCS 输出 ---
-    p.add_argument("--gcs-output", default="", help="训练完成后上传 checkpoint 到此 GCS 路径")
+    p.add_argument("--gcs-output", default="",
+                    help="训练完成后上传 checkpoint 到此 GCS 路径")
     p.add_argument("--output-dir", default="/gcs/output/str_groot_vertex",
                     help="容器内输出目录")
 
@@ -107,19 +111,21 @@ def parse_args():
     p.add_argument("--wandb", action="store_true", default=False)
     p.add_argument("--wandb-project", default="str_groot_vertex")
     p.add_argument("--wandb-entity", default=None)
-    p.add_argument("--wandb-api-key", default=None, help="WandB API key（也可通过 WANDB_API_KEY 环境变量设置）")
+    p.add_argument("--wandb-api-key", default=None,
+                    help="WandB API key (也可通过 WANDB_API_KEY 环境变量设置)")
 
     # --- 其他 ---
-    p.add_argument("--service-account", default=None, help="用于训练作业的 Service Account")
-    p.add_argument("--network", default=None, help="VPC 网络（如需要 peering）")
+    p.add_argument("--service-account", default=None,
+                    help="用于训练作业的 Service Account")
+    p.add_argument("--network", default=None, help="VPC 网络 (如需 peering)")
     p.add_argument("--tensorboard", default=None, help="Vertex AI Tensorboard 实例名")
-    p.add_argument("--dry-run", action="store_true", help="仅打印配置，不提交作业")
+    p.add_argument("--dry-run", action="store_true", help="仅打印配置, 不提交作业")
 
     return p.parse_args()
 
 
 def get_default_project():
-    """从 gcloud config 获取默认项目。"""
+    """从 gcloud config 获取默认项目."""
     import subprocess
     try:
         result = subprocess.run(
@@ -132,7 +138,7 @@ def get_default_project():
 
 
 def build_container_args(args) -> list[str]:
-    """构建传递给容器 ENTRYPOINT 的参数列表。"""
+    """构建传递给容器 ENTRYPOINT 的参数列表."""
     container_args = [
         f"--dataset-repo={args.dataset_repo}",
         f"--starvla-checkpoint={args.starvla_checkpoint}",
@@ -222,7 +228,7 @@ def main():
     LOGGER.info("=" * 60)
 
     if args.dry_run:
-        LOGGER.info("DRY RUN 模式 — 不提交作业。")
+        LOGGER.info("DRY RUN 模式 - 不提交作业。")
         return
 
     # --- 提交作业 ---
@@ -294,7 +300,7 @@ def main():
         service_account=args.service_account,
         network=args.network,
         tensorboard=args.tensorboard,
-        sync=False,  # 异步提交，不阻塞
+        sync=False,  # 异步提交, 不阻塞
     )
 
     LOGGER.info("作业已提交!")

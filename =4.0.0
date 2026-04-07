@@ -1,6 +1,0 @@
-Collecting typeguard
-  Downloading typeguard-4.5.1-py3-none-any.whl.metadata (3.8 kB)
-Requirement already satisfied: typing_extensions>=4.14.0 in ./lerobot-venv/lib/python3.12/site-packages (from typeguard) (4.15.0)
-Downloading typeguard-4.5.1-py3-none-any.whl (36 kB)
-Installing collected packages: typeguard
-Successfully installed typeguard-4.5.1

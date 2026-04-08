@@ -47,3 +47,33 @@ If you use this work, please cite both **OpenPI** and the π₀.₅ paper:
 ## License
 
 This port follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).
+
+## 参考资料
+
+### 论文
+- **π₀ 论文**: "π₀: A Vision-Language-Action Flow Model for General Robot Control", Physical Intelligence, 2024. ([PDF](https://www.pi.website/download/pi0.pdf), [arXiv:2410.24164](https://arxiv.org/abs/2410.24164))
+- **π₀.₅ 论文**: "π₀.₅: a Vision-Language-Action Model for Open-World Robot Manipulation", Physical Intelligence, 2025. ([PDF](https://www.pi.website/download/pi05.pdf), [arXiv:2504.16054](https://arxiv.org/abs/2504.16054))
+- **Flow Matching**: Lipman et al., "Flow Matching for Generative Modeling", ICLR 2023.
+- **DiT**: Peebles & Xie, "Scalable Diffusion Models with Transformers", ICCV 2023. (AdaLN-Zero / AdaRMSNorm 灵感来源)
+- **SigLIP**: Zhai et al., "Sigmoid Loss for Language Image Pre-Training", ICCV 2023.
+- **PaliGemma**: Google DeepMind, 2024.
+- **FAST Tokenizer**: Pertsch et al., "Fast Action Tokenizer for Efficient Robot Learning", Physical Intelligence, 2024.
+
+### 博客
+- [π₀ 博客](https://www.pi.website/blog/pi0) - Physical Intelligence 官方
+- [π₀.₅ 博客](https://www.pi.website/blog/pi05) - Physical Intelligence 官方
+- [HuggingFace Blog: π₀ and π₀-FAST](https://huggingface.co/blog/pi0) - 社区分析
+- [Mike Kalil: π₀.₅ Analysis](https://mikekalil.com/blog/pi-vla-open-world-generalization/) - 第三方技术分析
+
+### GitHub
+- [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) - 官方开源实现
+- 关键 commit：`4d389c3` / `ab6fb3c`（初始 π₀.₅ 支持），`e061c09`（PyTorch 支持）
+- [Knowledge Insulation 研究页](https://www.pi.website/research/knowledge_insulation)
+
+### 相关技术
+- [Big Vision](https://github.com/google-research/big_vision) - Gemma / PaliGemma 原始实现
+- [LeRobot](https://github.com/huggingface/lerobot) - 机器人数据集格式
+- [Open X-Embodiment](https://robotics-transformer-x.github.io/) - 跨机器人数据集
+
+### Lerobot 相关(**重要**)
+- https://huggingface.co/docs/lerobot/pi05

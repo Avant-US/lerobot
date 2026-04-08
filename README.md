@@ -174,3 +174,15 @@ We welcome contributions from everyone in the community! To get started, please 
 <div align="center">
 <sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
 </div>
+
+## Lerobot参考
+
+- 论文[LeRobot: An Open-Source Library for End-to-End Robot Learning](https://arxiv.org/abs/2602.22818)
+- [Github代码库](https://github.com/huggingface/lerobot) 主要是关注Issues, Commits, Disscusions, Pull requests 等等.
+- **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
+- **[Chinese Tutorials: LeRobot+SO-ARM101中文教程-同济子豪兄](https://zihao-ai.feishu.cn/wiki/space/7589642043471924447)** Detailed doc for assembling, teleoperate, dataset, train, deploy. Verified by Seed Studio and 5 global hackathon players.
+- **[Discord](https://discord.gg/q8Dzzpym3f):** Join the `LeRobot` server to discuss with the community.
+- **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
+- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
+- `bt/docs/`里面的所有文档
+- 代码结构主要是基于这个本地的lerobot代码库.

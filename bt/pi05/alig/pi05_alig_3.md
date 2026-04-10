@@ -813,7 +813,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 - 实际数据中 `q99 - q01 >> 1e-6`，差异可忽略
 
-#### P2-2: Norm Stats 来源
+#### P2-2: Normalization Stats 来源     @#2
 
 - OpenPI: `assets/r1_pro_data_convert_chassis/norm_stats.json`
 - LeRobot: `dataset.meta.stats`

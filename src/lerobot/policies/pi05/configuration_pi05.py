@@ -99,6 +99,23 @@ class PI05Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
+    # Data augmentation settings (for OpenPI alignment)
+    # Enable and use default values to match OpenPI JAX pi05_r1pro_chassis
+    augmentation_enabled: bool = False
+
+    # Geometric augmentation (applied to non-wrist cameras only)
+    aug_crop_scale: float = 0.95  # RandomCrop as fraction of image size
+    aug_rotate_degrees: float = 5.0  # Max rotation angle in degrees (+/-)
+
+    # Color augmentation (applied to all cameras)
+    aug_color_brightness: float = 0.3
+    aug_color_contrast: float = 0.4
+    aug_color_saturation: float = 0.5
+
+    # Camera classification: keys containing any of these patterns are treated as wrist cameras
+    # (only receive color augmentation, no geometric augmentation)
+    aug_wrist_patterns: tuple[str, ...] = ("wrist",)
+
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
@@ -158,6 +175,7 @@ class PI05Config(PreTrainedConfig):
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
             num_decay_steps=self.scheduler_decay_steps,
+            phase_mode="post_warmup",  # align with OpenPI optax semantics
         )
 
     @property

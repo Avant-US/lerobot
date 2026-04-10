@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+import torchvision.transforms.v2.functional as TF
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available
@@ -1200,6 +1201,71 @@ class PI05Policy(PreTrainedPolicy):
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
+    def _augment_image(self, img: Tensor, camera_key: str) -> Tensor:
+        """Apply OpenPI-compatible data augmentation.
+
+        Matches the augmentation in openpi/models/model.py:preprocess_observation().
+
+        Args:
+            img: [B, H, W, C] tensor in [0, 1] float32, already resized to target resolution.
+            camera_key: Camera feature key, e.g. "observation.images.base_0_rgb".
+
+        Returns:
+            Augmented tensor, same shape and value range [0, 1].
+        """
+        is_wrist = any(p in camera_key for p in self.config.aug_wrist_patterns)
+
+        b, h, w, c = img.shape
+
+        # Convert to [B, C, H, W] for torchvision functional ops.
+        # Clone to avoid mutating the caller's tensor (permute returns a view).
+        img = img.permute(0, 3, 1, 2).clone()
+
+        if not is_wrist:
+            # Geometric augmentation: per-sample random crop -> resize -> rotate
+            crop_h = int(h * self.config.aug_crop_scale)
+            crop_w = int(w * self.config.aug_crop_scale)
+
+            results = []
+            for i in range(b):
+                sample = img[i]  # [C, H, W]
+
+                # RandomCrop
+                top = torch.randint(0, h - crop_h + 1, (1,), device=img.device).item()
+                left = torch.randint(0, w - crop_w + 1, (1,), device=img.device).item()
+                sample = TF.crop(sample, top, left, crop_h, crop_w)
+
+                # Resize back to original size
+                sample = TF.resize(sample, [h, w], antialias=True)
+
+                # Rotate
+                angle = (
+                    torch.rand(1, device=img.device).item() * 2 * self.config.aug_rotate_degrees
+                    - self.config.aug_rotate_degrees
+                )
+                sample = TF.rotate(sample, angle)
+
+                results.append(sample)
+            img = torch.stack(results)
+
+        # Color augmentation: per-sample random jitter (applied to ALL cameras)
+        for i in range(b):
+            # Brightness
+            factor = 1.0 + (torch.rand(1, device=img.device).item() * 2 - 1) * self.config.aug_color_brightness
+            img[i] = TF.adjust_brightness(img[i], factor)
+
+            # Contrast
+            factor = 1.0 + (torch.rand(1, device=img.device).item() * 2 - 1) * self.config.aug_color_contrast
+            img[i] = TF.adjust_contrast(img[i], factor)
+
+            # Saturation
+            factor = 1.0 + (torch.rand(1, device=img.device).item() * 2 - 1) * self.config.aug_color_saturation
+            img[i] = TF.adjust_saturation(img[i], factor)
+
+        # Back to [B, H, W, C] and clamp
+        img = img.permute(0, 2, 3, 1).clamp(0.0, 1.0)
+        return img
+
     def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
@@ -1243,6 +1309,10 @@ class PI05Policy(PreTrainedPolicy):
             # from openpi preprocess_observation_pytorch: Resize with padding if needed
             if img.shape[1:3] != self.config.image_resolution:
                 img = resize_with_pad_torch(img, *self.config.image_resolution)
+
+            # Apply augmentation in [0,1] domain (after resize, before normalization)
+            if self.training and self.config.augmentation_enabled:
+                img = self._augment_image(img, key)
 
             # Normalize from [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0

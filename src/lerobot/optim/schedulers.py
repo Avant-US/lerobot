@@ -18,6 +18,7 @@ import logging
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 import draccus
 from torch.optim import Optimizer
@@ -84,12 +85,18 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
     Automatically scales warmup and decay steps if num_training_steps < num_decay_steps.
     This ensures the learning rate schedule completes properly even with shorter training runs.
+
+    phase_mode controls how the cosine decay phase is computed:
+    - "absolute": cosine input = step / decay_steps (current default, preserves existing behavior)
+    - "post_warmup": cosine input = (step - warmup_steps) / (decay_steps - warmup_steps)
+      This matches optax.warmup_cosine_decay_schedule semantics where lr=peak at step=warmup_steps.
     """
 
     num_warmup_steps: int
     num_decay_steps: int
     peak_lr: float
     decay_lr: float
+    phase_mode: Literal["absolute", "post_warmup"] = "absolute"
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
         # Auto-scale scheduler parameters if training steps are shorter than configured decay steps
@@ -110,6 +117,8 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
                 f"(scale factor: {scale_factor:.3f})"
             )
 
+        phase_mode = self.phase_mode  # capture for closure
+
         def lr_lambda(current_step):
             def linear_warmup_schedule(current_step):
                 if current_step <= 0:
@@ -118,8 +127,15 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
                 return (1 / (actual_warmup_steps + 1) - 1) * frac + 1
 
             def cosine_decay_schedule(current_step):
-                step = min(current_step, actual_decay_steps)
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / actual_decay_steps))
+                if phase_mode == "post_warmup":
+                    total_cosine_steps = max(1, actual_decay_steps - actual_warmup_steps)
+                    relative_step = min(current_step - actual_warmup_steps, total_cosine_steps)
+                    progress = relative_step / total_cosine_steps
+                else:  # "absolute"
+                    step = min(current_step, actual_decay_steps)
+                    progress = step / actual_decay_steps
+
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
                 alpha = self.decay_lr / self.peak_lr
                 decayed = (1 - alpha) * cosine_decay + alpha
                 return decayed

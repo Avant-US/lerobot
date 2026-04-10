@@ -19,10 +19,10 @@
 
 ```bash
 # 创建虚拟环境 (如已创建可跳过)
-uv venv --python 3.12 /home/luogang/VENV/lerobot-venv
+uv venv --python 3.12 /mnt/r/Venv/lerobot-venv
 
 # 激活虚拟环境
-source /home/luogang/VENV/lerobot-venv/bin/activate
+source /mnt/r/Venv/lerobot-venv/bin/activate
 
 # 安装 lerobot 及 pi 依赖
 uv pip install -e ".[pi]"
@@ -57,15 +57,27 @@ mkdir -p ~/hfhome/
 
 ```
 bt/pi05/
-├── README.md               # 本文档
-├── __init__.py              # Python 包标识
-├── prepare_data.py          # 数据采样与下载脚本
-├── train.sh                 # 训练 shell 脚本
-├── selected_episodes.json   # (运行后生成) 抽取的 episode 列表
-└── outputs/                 # (运行后生成) 训练输出
-    └── pi05_libero_37ep/
-        ├── checkpoints/
-        └── train_config.json
+├── README.md                  # 本文档
+├── __init__.py                # Python 包标识
+├── prepare_data.py            # 数据采样与下载脚本
+├── train.sh                   # 训练入口 shell 脚本
+├── train_pi05_local.py        # 训练 Python 入口 (绕过全量策略导入)
+├── selected_episodes.json     # (运行后生成) 抽取的 episode 列表
+├── outputs/                   # (运行后生成) 训练输出
+│   └── pi05_libero_37ep/
+│       └── checkpoints/
+└── alig/                      # OpenPI 对齐: EMA + Loss 截断
+    ├── __init__.py
+    ├── aligdesign.md           # 对齐设计方案 (EMA + Loss 截断)
+    ├── test_ema_checkpoint.sh  # EMA checkpoint 端到端验证 shell 入口
+    ├── test_ema_checkpoint.py  # EMA checkpoint 端到端验证 Python 脚本
+    ├── pi05_alig*.md           # 对齐分析文档 (多版本)
+    └── mdldiff.md / pi05_diffanalyz.md  # 模型差异分析
+
+tests/policies/pi0_pi05/
+├── test_pi05.py               # PI0.5 基础功能测试
+├── test_pi05_alignment.py     # EMA + Loss 截断对齐单元测试
+└── ...
 ```
 
 ## 使用方法
@@ -179,6 +191,160 @@ python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
 ```
 
 **关于 `train_expert_only`**: 设为 `true` 会冻结 VLM 主干，只训练 action expert 和投影层。这大幅降低显存需求，适合快速实验。如需全参数微调，设为 `false`。
+
+## 脚本使用说明
+
+### 训练脚本
+
+#### `train.sh` — 训练入口
+
+一键完成数据准备 + Pi0.5 微调训练。
+
+```bash
+# 完整流程 (数据准备 + 训练)
+./bt/pi05/train.sh
+
+# 仅准备数据
+./bt/pi05/train.sh prepare
+
+# 仅训练 (需先 prepare)
+./bt/pi05/train.sh train
+
+# 查看帮助
+./bt/pi05/train.sh help
+```
+
+可通过环境变量覆盖默认配置:
+
+```bash
+PI05_STEPS=200 PI05_BATCH_SIZE=2 PI05_LOG_FREQ=20 ./bt/pi05/train.sh train
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `PI05_STEPS` | `100` | 训练步数 |
+| `PI05_BATCH_SIZE` | `4` | 批大小 |
+| `PI05_LOG_FREQ` | `10` | 日志频率 |
+| `PI05_SAVE_FREQ` | `100` | Checkpoint 保存频率 |
+| `PI05_NUM_WORKERS` | `4` | DataLoader worker 数 |
+| `PI05_TOKENIZER_NAME` | `google/paligemma-3b-pt-224` | Tokenizer |
+| `PI05_NORMALIZATION_MODE` | `QUANTILES` | 归一化模式 |
+
+#### `train_pi05_local.py` — 训练 Python 入口
+
+`train.sh` 内部调用的 Python 脚本。绕过 `lerobot.policies.__init__` 的全量导入链（避免导入 groot 等不必要的依赖），直接构建 PI05Policy 并运行训练循环。
+
+```bash
+python -m bt.pi05.train_pi05_local \
+    --repo-id="HuggingFaceVLA/libero" \
+    --local-root="$HF_HOME/lerobot/HuggingFaceVLA/libero" \
+    --episode-file="bt/pi05/selected_episodes.json" \
+    --pretrained-path="lerobot/pi05_base" \
+    --output-dir="bt/pi05/outputs/my_run" \
+    --steps=100 --batch-size=4 --dtype=bfloat16 \
+    --gradient-checkpointing --train-expert-only
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--repo-id` | (必填) | HuggingFace 数据集 ID |
+| `--local-root` | (必填) | 本地数据根目录 |
+| `--episode-file` | (必填) | episode 列表 JSON 文件 |
+| `--pretrained-path` | `lerobot/pi05_base` | 预训练模型 |
+| `--output-dir` | (必填) | 输出目录 |
+| `--steps` | `100` | 训练步数 |
+| `--batch-size` | `4` | 批大小 |
+| `--lr` | `2.5e-5` | 学习率 |
+| `--dtype` | `bfloat16` | 精度 (`bfloat16` / `float32`) |
+| `--gradient-checkpointing` | `false` | 启用梯度检查点 |
+| `--train-expert-only` | `false` | 仅训练 action expert |
+
+#### `prepare_data.py` — 数据采样与下载
+
+从 LIBERO 数据集随机抽取 episode 并下载到本地:
+
+```bash
+python -m bt.pi05.prepare_data --num-episodes 37 --seed 42
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--num-episodes` | `37` | 抽取 episode 数 |
+| `--seed` | `42` | 随机种子 |
+| `--skip-download` | `false` | 只生成列表不下载 |
+
+---
+
+### OpenPI 对齐测试脚本
+
+对齐功能通过两个配置项控制（在 `PI05Config` 中添加）:
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `ema_decay` | `None` | EMA 衰减系数。设为 `0.99` 以对齐 OpenPI |
+| `loss_include_padding` | `False` | 设为 `True` 使 loss 包含 padding 维度 (OpenPI 行为) |
+
+#### `alig/test_ema_checkpoint.sh` — EMA Checkpoint 端到端验证
+
+验证 EMA 模式下 checkpoint 的保存是否正确。
+
+```bash
+# 默认参数 (5 步, decay=0.99)
+./bt/pi05/alig/test_ema_checkpoint.sh
+
+# 自定义参数
+EMA_STEPS=10 EMA_DECAY=0.995 ./bt/pi05/alig/test_ema_checkpoint.sh
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `EMA_STEPS` | `5` | 训练步数 |
+| `EMA_DECAY` | `0.99` | EMA 衰减系数 |
+
+验证内容 (共 13 项):
+
+| # | 验证项 | 说明 |
+|---|--------|------|
+| 1-4 | EMA 递推公式 | `ema_new = decay * ema_old + (1-decay) * param_new` |
+| 5 | EMA 与训练参数分叉 | 训练后 EMA 参数 ≠ 原始参数 |
+| 6-8 | 文件结构 | `model.safetensors`、`ema_state.safetensors`、`raw_trainable_params.safetensors` 存在 |
+| 9 | model.safetensors = EMA | 推理权重文件中保存的是 EMA 参数 |
+| 10 | model.safetensors ≠ raw | 推理权重 ≠ 原始训练参数 |
+| 11 | ema_state 数值一致 | 文件中的 EMA 值与内存一致 |
+| 12 | raw_trainable 数值一致 | 文件中的训练参数与内存一致 |
+| 13 | save 后参数恢复 | 保存后模型参数恢复为训练参数 |
+
+也可直接运行 Python 脚本:
+
+```bash
+python -m bt.pi05.alig.test_ema_checkpoint --steps=5 --ema-decay=0.99
+```
+
+#### `tests/policies/pi0_pi05/test_pi05_alignment.py` — 对齐单元测试
+
+使用 pytest 运行的单元测试，覆盖 Loss 截断对齐和 EMA 对齐两个方面。需要 CUDA + HuggingFace token。
+
+```bash
+# 运行全部对齐测试
+python -m pytest tests/policies/pi0_pi05/test_pi05_alignment.py -v
+
+# 运行单个测试
+python -m pytest tests/policies/pi0_pi05/test_pi05_alignment.py::test_ema_update_formula -v
+```
+
+测试列表:
+
+| 测试名 | 类别 | 说明 |
+|--------|------|------|
+| `test_loss_truncation_gradient_coverage` | Loss 截断 | `loss_include_padding=False` 时 padding 列梯度为 0；`=True` 时全部列有梯度 |
+| `test_ema_disabled_by_default` | EMA | `ema_decay=None` 时 `update()` 无操作 |
+| `test_ema_init_on_first_update` | EMA | 首次 `update()` 延迟初始化，EMA = 当前参数 |
+| `test_ema_update_formula` | EMA | 验证公式 `ema = 0.99 * ema_old + 0.01 * param_new` |
+| `test_ema_inference_uses_ema_params` | EMA | `select_action` 使用 EMA 参数，输出与裸参数不同 |
+| `test_ema_swap_restore_roundtrip` | EMA | `_swap_to_ema` + `_restore_from_backup` 完美往返 |
+| `test_ema_nested_swap_protection` | EMA | 嵌套调用 `_swap_to_ema` 返回 None，防止重复交换 |
+
+---
 
 ## 参考文档
 

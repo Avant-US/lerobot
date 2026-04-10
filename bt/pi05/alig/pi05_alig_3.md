@@ -741,7 +741,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 ---
 
-#### P0-2: Loss 截断 (32 维 vs 23 维)
+#### P0-2: Loss 截断 (32 维 vs 23 维)   @#0
 
 | 项目 | OpenPI JAX | LeRobot |
 |------|-----------|---------|
@@ -757,7 +757,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 ---
 
-#### P0-3: LR Schedule 余弦相位差异（新发现）
+#### P0-3: LR Schedule 余弦相位差异（新发现）   @#1
 
 | 项目 | OpenPI JAX | LeRobot |
 |------|-----------|---------|
@@ -774,7 +774,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 ### 5.2 P1: Important — 需修复以实现 L2 等价
 
-#### P1-1: EMA (0.99 vs 无)
+#### P1-1: EMA (0.99 vs 无)     @#0
 
 - **影响**: 推理权重质量差异 0.5-3%
 - **修复**: 实现 EMA (见 Section 4.3)
@@ -790,7 +790,7 @@ EMA 需要存储全部参数的额外拷贝:
 - OpenPI JAX 不使用 `autocast`，参数本身就是 bfloat16
 - **修复**: 训练时设 `dtype="bfloat16"`
 
-#### P1-3: 数据增强（有 vs 无）
+#### P1-3: 数据增强（有 vs 无）     @#1
 
 - **影响**: 增强提升泛化能力，对最终部署成功率有显著影响
 - **修复**: 实现等价的 PyTorch 增强（见 Section 10）
@@ -922,7 +922,7 @@ optimizer_weight_decay: float = 1e-10
 
 ---
 
-#### 修改 2: Loss 截断开关
+#### 修改 2: Loss 截断开关   @#0
 
 **文件 A**: `src/lerobot/policies/pi05/configuration_pi05.py`
 
@@ -982,7 +982,7 @@ def cosine_decay_schedule(current_step):
 
 ### 7.2 P1 修改 — 重要
 
-#### 修改 4: EMA 支持
+#### 修改 4: EMA 支持    @#0
 
 **方案**: 在训练脚本中添加 EMA 逻辑（不修改 LeRobot 核心代码）
 

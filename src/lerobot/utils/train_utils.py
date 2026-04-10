@@ -33,6 +33,9 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
+import torch
+from torch import Tensor
+
 
 def get_step_identifier(step: int, total_steps: int) -> str:
     num_digits = max(6, len(str(total_steps)))
@@ -97,7 +100,18 @@ def save_checkpoint(
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+
+    # EMA: swap EMA params into model so model.safetensors contains EMA weights (for inference)
+    ema_backup = None
+    if hasattr(policy, '_swap_to_ema') and hasattr(policy, '_ema_params') and policy._ema_params is not None:
+        ema_backup = policy._swap_to_ema()
+
     policy.save_pretrained(pretrained_dir)
+
+    # Restore training params after saving
+    if ema_backup is not None and hasattr(policy, '_restore_from_backup'):
+        policy._restore_from_backup(ema_backup)
+
     cfg.save_pretrained(pretrained_dir)
     if cfg.peft is not None:
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the
@@ -107,7 +121,21 @@ def save_checkpoint(
         preprocessor.save_pretrained(pretrained_dir)
     if postprocessor is not None:
         postprocessor.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+
+    # Collect EMA state and raw trainable params for training state
+    ema_state = getattr(policy, '_ema_params', None)
+    raw_trainable = None
+    if ema_state is not None:
+        raw_trainable = {
+            name: param.data.clone()
+            for name, param in policy.named_parameters()
+            if param.requires_grad
+        }
+
+    save_training_state(
+        checkpoint_dir, step, optimizer, scheduler,
+        ema_state=ema_state, raw_trainable_params=raw_trainable,
+    )
 
 
 def save_training_state(
@@ -115,9 +143,12 @@ def save_training_state(
     train_step: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
+    ema_state: dict[str, Tensor] | None = None,
+    raw_trainable_params: dict[str, Tensor] | None = None,
 ) -> None:
     """
-    Saves the training step, optimizer state, scheduler state, and rng state.
+    Saves the training step, optimizer state, scheduler state, rng state,
+    and optionally EMA / raw trainable parameters.
 
     Args:
         save_dir (Path): The directory to save artifacts to.
@@ -126,6 +157,9 @@ def save_training_state(
             Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler from which to save the state_dict.
             Defaults to None.
+        ema_state: EMA shadow parameters dict. Defaults to None.
+        raw_trainable_params: Original trainable parameters (needed when model.safetensors
+            contains EMA weights). Defaults to None.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +169,14 @@ def save_training_state(
         save_optimizer_state(optimizer, save_dir)
     if scheduler is not None:
         save_scheduler_state(scheduler, save_dir)
+
+    # Save EMA state and raw trainable params for resume
+    if ema_state is not None:
+        from safetensors.torch import save_file
+        save_file(ema_state, save_dir / "ema_state.safetensors")
+    if raw_trainable_params is not None:
+        from safetensors.torch import save_file
+        save_file(raw_trainable_params, save_dir / "raw_trainable_params.safetensors")
 
 
 def load_training_state(

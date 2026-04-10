@@ -88,6 +88,10 @@ class PI05Config(PreTrainedConfig):
     optimizer_weight_decay: float = 0.01
     optimizer_grad_clip_norm: float = 1.0
 
+    # OpenPI alignment settings
+    ema_decay: float | None = None  # EMA decay. Set to 0.99 to align with OpenPI. None = disabled.
+    loss_include_padding: bool = False  # If True, loss includes padding dims (OpenPI behavior)
+
     # Scheduler settings: see openpi `CosineDecaySchedule`
     # Note: These will auto-scale if --steps < scheduler_decay_steps
     # For example, --steps=3000 will scale warmup to 100 and decay to 3000

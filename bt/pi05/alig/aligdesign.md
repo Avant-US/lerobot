@@ -1,6 +1,7 @@
 # LeRobot pi0.5 与 OpenPI JAX 对齐：EMA 与 Loss 截断 — 设计与实现方案
 
 > **日期**: 2026-04-09
+> **Prompt**: 请生成一份在EMA和"Loss截断"方面将 lerobot 的 pi0.5 与 jax模式的 openpi 中名为`pi05_r1pro_chassis`的TrainConfig对应的pi0.5实现进行对齐的设计与实现方案,目标是"使 LeRobot 的 pi0.5 fine-tuning 在 R1 Pro chassis 数据上产生与 OpenPI `pi05_r1pro_chassis` 等价的训练结果". 请参考 `/home/Luogang/SRC/Robot/lerobot/bt/pi05/alig/` 目录下的各个md文档, 以及对 @pi/openpi/   这个openpi的本地代码库 和 @lerobot/   这个lerobot的本地代码库, 这两个代码库进行深入分析. 设计与实现方案生成在 /home/Luogang/SRC/Robot/lerobot/bt/pi05/alig/aligdesign.md中, 写的要图文并茂(比如各种UML图和核心代码片段说明). 注意:尽量不要影响现有lerobot的用法,以及lerobot除pi0.5以外的其它类或模块.
 > **目标**: 使 LeRobot 的 pi0.5 fine-tuning 在 R1 Pro chassis 数据上产生与 OpenPI `pi05_r1pro_chassis` 等价的训练结果
 > **范围**: 仅覆盖 **EMA (Exponential Moving Average)** 和 **Loss 截断** 两个对齐项
 > **约束**: 不影响 LeRobot 现有用法，不影响 PI0.5 以外的策略/模块

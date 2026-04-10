@@ -933,6 +933,10 @@ class PI05Policy(PreTrainedPolicy):
 
         self.reset()
 
+        # EMA state (lazy-initialized on first update() call after PEFT/DDP wrapping)
+        self._ema_params: dict[str, torch.Tensor] | None = None
+        self._ema_active: bool = False
+
     @classmethod
     def from_pretrained(
         cls: builtins.type[T],
@@ -1123,6 +1127,63 @@ class PI05Policy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def _init_ema(self):
+        """Initialize EMA shadow parameters as a copy of current trainable parameters.
+
+        Deferred to first update() call to ensure PEFT/DDP wrapping is complete and param names are stable.
+        Corresponds to OpenPI: train.py:113 -- ema_params = params (same initial values).
+        """
+        self._ema_params = {}
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                self._ema_params[name] = param.data.clone()
+
+    def update(self):
+        """Update EMA shadow parameters after each optimizer step.
+
+        Corresponds to OpenPI: train.py:169-175
+        Formula: ema = decay * ema + (1 - decay) * param
+        """
+        if self.config.ema_decay is None:
+            return
+
+        # Lazy init: create EMA shadow params on first call
+        if self._ema_params is None:
+            self._init_ema()
+
+        decay = self.config.ema_decay
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if param.requires_grad and name in self._ema_params:
+                    self._ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
+
+    def _swap_to_ema(self) -> dict[str, torch.Tensor] | None:
+        """Swap model parameters with EMA values, return backup of original parameters.
+
+        Uses _ema_active flag to prevent nested swaps (select_action calls predict_action_chunk).
+        Corresponds to OpenPI: checkpoints.py:145-152 (saving EMA params for inference).
+        """
+        if self._ema_params is None or self._ema_active:
+            return None
+        backup = {}
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if name in self._ema_params:
+                    backup[name] = param.data.clone()
+                    param.data.copy_(self._ema_params[name])
+        self._ema_active = True
+        return backup
+
+    def _restore_from_backup(self, backup: dict[str, torch.Tensor] | None):
+        """Restore model parameters from backup (after EMA inference)."""
+        if backup is None:
+            return
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if name in backup:
+                    param.data.copy_(backup[name])
+        self._ema_active = False
+
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
@@ -1218,14 +1279,17 @@ class PI05Policy(PreTrainedPolicy):
         )
 
         self.eval()
+        backup = self._swap_to_ema()
+        try:
+            # Action queue logic for n_action_steps > 1
+            if len(self._action_queue) == 0:
+                actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+                # Transpose to get shape (n_action_steps, batch_size, action_dim)
+                self._action_queue.extend(actions.transpose(0, 1))
 
-        # Action queue logic for n_action_steps > 1
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
-            # Transpose to get shape (n_action_steps, batch_size, action_dim)
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
+            return self._action_queue.popleft()
+        finally:
+            self._restore_from_backup(backup)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
@@ -1263,9 +1327,11 @@ class PI05Policy(PreTrainedPolicy):
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
-        # Truncate losses to actual action dimensions
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        losses = losses[:, :, :original_action_dim]
+        # Optionally truncate losses to actual action dimensions
+        # When loss_include_padding=True, loss includes padding dims (OpenPI behavior)
+        if not self.config.loss_include_padding:
+            original_action_dim = self.config.output_features[ACTION].shape[0]
+            losses = losses[:, :, :original_action_dim]
 
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),

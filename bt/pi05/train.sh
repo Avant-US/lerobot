@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-VENV_DIR="/home/luogang/VENV/lerobot-venv"
+VENV_DIR="/mnt/r/Venv/lerobot-venv"
 EPISODE_FILE="$SCRIPT_DIR/selected_episodes.json"
 export HF_HOME="$HOME/hfhome"
 mkdir -p "$HF_HOME"

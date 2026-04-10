@@ -322,6 +322,30 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
+        # Restore EMA state and raw trainable params if present
+        from lerobot.utils.constants import TRAINING_STATE_DIR
+
+        training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
+        unwrapped = accelerator.unwrap_model(policy, keep_fp32_wrapper=True)
+
+        # 1. Restore raw trainable params (model.safetensors has EMA weights, need training weights)
+        raw_path = training_state_dir / "raw_trainable_params.safetensors"
+        if raw_path.exists():
+            from safetensors.torch import load_file
+
+            raw_params = load_file(str(raw_path), device=str(policy.device))
+            with torch.no_grad():
+                for name, param in unwrapped.named_parameters():
+                    if name in raw_params:
+                        param.data.copy_(raw_params[name])
+
+        # 2. Restore EMA shadow params
+        ema_path = training_state_dir / "ema_state.safetensors"
+        if ema_path.exists() and hasattr(unwrapped, '_ema_params'):
+            from safetensors.torch import load_file
+
+            unwrapped._ema_params = load_file(str(ema_path), device=str(policy.device))
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 

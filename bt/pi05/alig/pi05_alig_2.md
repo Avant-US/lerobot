@@ -538,7 +538,7 @@ if getattr(self.config, 'truncate_loss_to_action_dim', True):
 
 ---
 
-### 4.5 P1: Normalization Stats 来源
+### 4.5 P1: Normalization Stats 对齐
 
 **OpenPI**: 从 `assets/r1_pro_data_convert_chassis/norm_stats.json` 加载
 **LeRobot**: 从 `dataset.meta.stats` 加载

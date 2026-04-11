@@ -237,7 +237,7 @@ gradient_accumulation_steps = 64 // actual_batch_size  # = 8
 
 ---
 
-#### 2.2.3 数据集 Key 映射
+#### 2.2.3 数据集 Key 映射  @#data_convert
 
 **OpenPI 数据流**（`r1pro_chassis_policy.py`）：
 

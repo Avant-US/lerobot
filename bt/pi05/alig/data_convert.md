@@ -834,3 +834,223 @@ timestamp / frame_index / episode_index / index / task_index → 不变
 | `stats.json 缺少 q01 分位数` | Phase 2.5 未执行 | 确保未使用 `--skip-v30`（Phase 2.5 在 Phase 2 之后自动执行） |
 | `ValueError: Number of episodes is not the same` | 采样后 episode 索引未正确重编号 | 确保使用最新版转换脚本（已内置重编号逻辑） |
 | 磁盘空间不足 | 全量转换需约 90GB | 先用 `--sample-episodes 10` 测试，或指定有足够空间的 `--output` 路径 |
+
+---
+
+## 8. LeRobot vs OpenPI 数据集 Key 映射差异深度分析
+
+> **日期**: 2026-04-11
+> **背景**: `pi05_alig.md` 2.2.3 节指出 LeRobot 和 OpenPI 对数据集 Key 的需求不同。本节基于两个框架源码和两个本地数据集的完整数据流追踪，分析差异的本质、影响，以及转换脚本的覆盖情况。
+
+### 8.1 原始数据集的 Key（两个框架的共同起点）
+
+两个本地数据集 (`r1_pro_data_convert_chassis`, `r1_pro_test_data`) 使用 OpenPI 命名约定：
+
+| 原始 Key | 类型 | Shape | 说明 |
+|----------|------|-------|------|
+| `head_rgb` | image | [360,640,3] | 头部相机 |
+| `left_wrist_rgb` | image | [480,640,3] | 左腕相机 |
+| `right_wrist_rgb` | image | [480,640,3] | 右腕相机 |
+| `state` | float32 | [23] | 关节状态 |
+| `actions` | float32 | [23] | 动作 (**复数**) |
+| `task_index` | int64 | [1] | 任务索引 |
+
+### 8.2 两个框架的完整数据流
+
+#### 8.2.1 OpenPI 数据流 (pi05_r1pro_chassis 配置)
+
+```
+原始数据集 (v2.1, OpenPI Key)
+  head_rgb, left_wrist_rgb, right_wrist_rgb, state, actions, task_index
+                              │
+                              ▼
+  PromptFromLeRobotTask          (data_loader.py:149)
+    task_index → 查 tasks dict → 添加 "prompt" key
+                              │
+                              ▼
+  R1ProChassisInputs             (r1pro_chassis_policy.py:55-80)
+    head_rgb       → image["base_0_rgb"]
+    left_wrist_rgb → image["left_wrist_0_rgb"]
+    right_wrist_rgb→ image["right_wrist_0_rgb"]
+    state          → state (不变)
+    actions        → actions (不变)
+    + image_mask (全 True)
+                              │
+                              ▼
+  Normalize                      (transforms.py:144)
+    norm_stats keys: "state", "actions"
+    公式: (x - q01) / (q99 - q01 + 1e-6) * 2 - 1
+                              │
+                              ▼
+  ModelTransformFactory → Pi0.5  (config.py:128-140)
+    InjectDefaultPrompt → ResizeImages(224,224) →
+    TokenizePrompt(discrete_state_input=True):
+      读 normalized state → 离散化 256 bins
+      构建 "Task: {text}, State: {bins};\nAction: "
+      SentencePiece 编码 → tokenized_prompt + tokenized_prompt_mask
+    → PadStatesAndActions(32): state/actions 补零到 32 维
+                              │
+                              ▼
+  Observation.from_dict          (model.py:110-129)
+    data["image"]              → images (dict: base_0_rgb, left_wrist_0_rgb, right_wrist_0_rgb)
+    data["state"]              → state (32 维)
+    data["tokenized_prompt"]   → tokenized_prompt
+    batch["actions"]           → actions (32 维)
+```
+
+**关键源码引用**:
+- `action_sequence_keys=("actions",)`: `config.py:1036` — 用于构建 `delta_timestamps`，从数据集读取 action chunk
+- `R1ProChassisInputs.__call__()`: `r1pro_chassis_policy.py:55-80` — 执行 `data["head_rgb"]` 等原始 key 读取
+- `Observation.from_dict()`: `model.py:110-129` — 最终模型输入结构
+
+#### 8.2.2 LeRobot 数据流 (Pi0.5 训练)
+
+```
+转换后数据集 (v3.0, LeRobot Key)
+  observation.images.head_rgb, observation.images.left_wrist_rgb,
+  observation.images.right_wrist_rgb, observation.state, action, task
+                              │
+                              ▼
+  RenameObservationsProcessorStep(rename_map={})   (processor_pi05.py:130)
+    (空映射, 无操作, 为 from_pretrained 兼容而保留)
+                              │
+                              ▼
+  AddBatchDimensionProcessorStep                    (batch_processor.py)
+    所有 tensor 增加 batch 维: [23] → [1,23], [C,H,W] → [1,C,H,W]
+                              │
+                              ▼
+  NormalizerProcessorStep                           (normalize_processor.py)
+    stats keys: "observation.state", "action" (来自 stats.json)
+    公式: 2 * (x - q01) / max(q99 - q01, 1e-8) - 1
+                              │
+                              ▼
+  Pi05PrepareStateTokenizerProcessorStep            (processor_pi05.py:57-85)
+    读 observation.state → 离散化 256 bins (同 OpenPI 算法)
+    构建 "Task: {text}, State: {bins};\nAction: " (同 OpenPI 格式)
+    更新 complementary_data["task"]
+                              │
+                              ▼
+  TokenizerProcessorStep                            (tokenizer_processor.py)
+    HuggingFace AutoTokenizer("google/paligemma-3b-pt-224")
+    → observation.language.tokens + observation.language.attention_mask
+                              │
+                              ▼
+  DeviceProcessorStep → 移到 GPU
+                              │
+                              ▼
+  PI05Policy.forward                                (modeling_pi05.py:1382-1419)
+    _preprocess_images: 遍历 config.image_features
+      → batch["observation.images.head_rgb"] 等
+      → resize 224x224, [0,1] → [-1,1]
+    prepare_action: batch["action"] → pad 到 32 维
+    tokens: batch["observation.language.tokens"]
+```
+
+**关键源码引用**:
+- `OBS_STATE = "observation.state"`: `constants.py:23` — Pi05PrepareStateTokenizerProcessorStep 读取此 key
+- `ACTION = "action"`: `constants.py:33` — PI05Policy.prepare_action() 读取此 key
+- `config.image_features`: `configuration_pi05.py` property — 过滤 `input_features` 中 `FeatureType.VISUAL` 类型
+
+### 8.3 Key 差异全对照表
+
+| 概念 | OpenPI 数据集 Key | OpenPI 模型内部 Key | LeRobot 数据集 Key | LeRobot 模型内部 Key |
+|------|-------------------|--------------------|--------------------|---------------------|
+| **头部相机** | `head_rgb` | `image.base_0_rgb` | `observation.images.head_rgb` | `observation.images.head_rgb` |
+| **左腕相机** | `left_wrist_rgb` | `image.left_wrist_0_rgb` | `observation.images.left_wrist_rgb` | `observation.images.left_wrist_rgb` |
+| **右腕相机** | `right_wrist_rgb` | `image.right_wrist_0_rgb` | `observation.images.right_wrist_rgb` | `observation.images.right_wrist_rgb` |
+| **状态** | `state` | `state` | `observation.state` | `observation.state` |
+| **动作** | `actions` (复数) | `actions` | `action` (单数) | `action` |
+| **任务文本** | `task_index` → `prompt` | `tokenized_prompt` | `task_index` → `task` | `observation.language.tokens` |
+| **归一化统计** | `state`/`actions` (norm_stats.json) | — | `observation.state`/`action` (stats.json) | — |
+| **图像容器结构** | 扁平 dict | 嵌套 dict: `data["image"]["base_0_rgb"]` | 扁平 dict | 扁平 dict: `batch["observation.images.head_rgb"]` |
+| **Action 序列读取** | `action_sequence_keys=("actions",)` | — | `ACTION = "action"` | — |
+
+### 8.4 差异的本质
+
+两个框架使用**完全不同的 Key 命名体系**，但差异是**形式上的而非实质上的**：
+
+1. **LeRobot 约定**: `observation.` 前缀 + 层级式命名 (`observation.images.head_rgb`)，动作用单数 `action`
+2. **OpenPI 约定**: 无前缀 + 扁平命名 (`head_rgb`)，内部重映射为通用 Key (`base_0_rgb`)，动作用复数 `actions`
+3. **各框架的 transform 链负责从各自期望的数据集 Key 映射到各自模型需要的内部 Key**
+
+关键要理解的是：**不存在一个统一的 "正确" Key 命名**。每个框架有自己的约定，并各自在 data transform 层解决映射问题：
+- OpenPI 通过 `R1ProChassisInputs` transform 完成映射
+- LeRobot 通过 `dataset_to_policy_features()` + processor pipeline 完成映射
+
+### 8.5 转换脚本的评估
+
+#### 8.5.1 转换脚本做了什么
+
+`convert_r1pro_to_lerobot.py` 的 `COLUMN_RENAME_MAP`:
+
+```python
+"head_rgb"        → "observation.images.head_rgb"       # 匹配 LeRobot OBS_IMAGES 前缀约定
+"left_wrist_rgb"  → "observation.images.left_wrist_rgb"  # 同上
+"right_wrist_rgb" → "observation.images.right_wrist_rgb" # 同上
+"state"           → "observation.state"                   # 匹配 OBS_STATE 常量 (constants.py:23)
+"actions"         → "action"                              # 匹配 ACTION 常量 (constants.py:33)
+```
+
+同时重命名了 `info.json` features keys、`episodes_stats.jsonl` stats keys，并计算了 q01/q99 分位数。
+
+#### 8.5.2 逐步验证
+
+| LeRobot Pi0.5 链路步骤 | 需要的 Key | 转换后提供 | 验证状态 |
+|------------------------|-----------|-----------|----------|
+| `dataset_to_policy_features()` | `observation.*` → STATE/VISUAL, `action` → ACTION | ✓ | 正确分类 |
+| `NormalizerProcessorStep` | stats.json 中 `observation.state` / `action` 含 q01/q99 | ✓ | 正确归一化 |
+| `Pi05PrepareStateTokenizerProcessorStep` | transition 中 `observation.state` | ✓ | 正确读取 |
+| `TokenizerProcessorStep` | complementary_data 中 `task` | ✓ (via LeRobotDataset) | 正确 tokenize |
+| `PI05Policy._preprocess_images()` | batch 中 `observation.images.*` | ✓ | 正确读取 |
+| `PI05Policy.prepare_action()` | batch 中 `action` | ✓ | 正确 pad 到 32 维 |
+
+**结论**: **转换脚本完全正确，无遗漏。** Level 1+2 验证已在实际数据上通过：
+- r1_pro_test_data: 4 episodes, 3366 frames, normalized state/action in [-1.000, 1.031]
+- r1_pro_chassis: 10 episodes, 9830 frames, normalized state/action in [-1.000, 1.000]
+
+### 8.6 次要差异（不影响训练正确性）
+
+#### 8.6.1 归一化公式微差
+
+| | OpenPI (`transforms.py:144`) | LeRobot (`normalize_processor.py`) |
+|-|------------------------------|-------------------------------------|
+| 公式 | `(x-q01) / (q99-q01 + 1e-6) * 2 - 1` | `2 * (x-q01) / max(q99-q01, 1e-8) - 1` |
+| epsilon | 无条件加 `1e-6` | 仅当 `q99==q01` 时用 `1e-8` |
+
+**影响**: 对 R1 Pro 数据 (q99-q01 通常 >> 1e-6)，两者差异 < 1e-6，被 256-bin 离散化完全吞没。**可忽略。**
+
+#### 8.6.2 Tokenizer 实现差异
+
+| | OpenPI | LeRobot |
+|-|--------|---------|
+| 实现 | `sentencepiece.SentencePieceProcessor` (GCS 下载 `paligemma_tokenizer.model`) | `AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")` |
+| 编码 | `encode(prompt, add_bos=True)` | HuggingFace API |
+
+两者底层使用相同的 SentencePiece model，产生相同 token 序列。**无影响。**
+
+#### 8.6.3 图像 resize 方法
+
+- OpenPI: `image_tools.resize_with_pad()` — 保持宽高比，黑边填充到 224×224
+- LeRobot: `resize_with_pad_torch()` (`modeling_pi05.py`) — 功能等价的 torch 实现
+
+**影响**: 当原图非正方形时 (360×640, 480×640)，pad 策略一致（都保持宽高比）。resize 算法细微差异可能在像素级产生微小偏差，但不影响训练质量。与 Key 映射无关。
+
+### 8.7 双框架使用策略
+
+| 框架 | 使用的数据集 | Key 命名 | 说明 |
+|------|------------|---------|------|
+| **OpenPI** | 原始数据集 (`/mnt/r/share/lkx/pi/data/r1_pro_*`) | `head_rgb`, `state`, `actions` | R1ProChassisInputs transform 处理映射 |
+| **LeRobot** | 转换后数据集 (`*_v30/`) | `observation.images.*`, `observation.state`, `action` | Processor pipeline 处理映射 |
+
+转换脚本**不修改原始数据集**，两个版本可共存：
+- OpenPI 配置 `pi05_r1pro_chassis` → `repo_id="r1_pro_data_convert_chassis"` → 读原始 Key
+- LeRobot 训练脚本 → `repo_id="local/r1_pro_chassis_v30"` → 读转换后 Key
+
+### 8.8 结论
+
+| 问题 | 答案 |
+|------|------|
+| LeRobot 和 OpenPI 对 Key 有差异吗？ | **有** — 命名体系完全不同 |
+| 差异有多大？ | **形式上差异大（不同命名约定），实质上差异小（各框架 transform 链各自解决）** |
+| 转换脚本能解决差异吗？ | **能** — 正确将 OpenPI Key 映射到 LeRobot Key，已通过 Level 1+2 验证 |
+| 需要额外代码修改吗？ | **不需要** — 当前方案完整、正确 |

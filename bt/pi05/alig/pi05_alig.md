@@ -70,7 +70,7 @@ TrainConfig(
 
 ---
 
-#### 2.1.1 Weight Decay: 1e-10 vs 0.01
+#### 2.1.1 Weight Decay: 1e-10 vs 0.01          @#2
 
 | 框架 | 值 | 文件:行号 |
 |------|-----|----------|
@@ -214,7 +214,7 @@ config = PI05Config(dtype="bfloat16", ...)
 
 ---
 
-#### 2.2.2 训练规模: batch_size 和 steps
+#### 2.2.2 训练规模: batch_size 和 steps          @#2
 
 | 参数 | OpenPI | LeRobot 默认 |
 |------|--------|-------------|
@@ -475,7 +475,7 @@ policy = PI05Policy.from_pretrained("lerobot/pi05_base")
 
 ---
 
-#### 2.3.4 Seed 与随机性
+#### 2.3.4 Seed 与随机性          @#2
 
 | 框架 | 默认 seed |
 |------|----------|

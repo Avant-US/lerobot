@@ -461,7 +461,7 @@ TrainConfig(
 
 ## 4. 差异清单与修复方案
 
-### 4.1 P0: Weight Decay (1e-10 vs 0.01) — ⚠️ 必须修复
+### 4.1 P0: Weight Decay (1e-10 vs 0.01) — ⚠️ 必须修复             @#2
 
 **OpenPI**: `optimizer.py:73` → `weight_decay: float = 1e-10`
 **LeRobot**: `configuration_pi05.py:88` → `optimizer_weight_decay: float = 0.01`
@@ -527,7 +527,7 @@ if getattr(self.config, 'truncate_loss_to_action_dim', True):
 
 ---
 
-### 4.4 P1: Batch Size 和步数
+### 4.4 P1: Batch Size 和步数          @#2
 
 **OpenPI**: `batch_size=64, num_train_steps=30000`
 **LeRobot**: 默认 `batch_size=8`（通常由训练脚本设置）
@@ -538,7 +538,7 @@ if getattr(self.config, 'truncate_loss_to_action_dim', True):
 
 ---
 
-### 4.5 P1: Normalization Stats 对齐
+### 4.5 P1: Normalization Stats 对齐          @#2
 
 **OpenPI**: 从 `assets/r1_pro_data_convert_chassis/norm_stats.json` 加载
 **LeRobot**: 从 `dataset.meta.stats` 加载
@@ -570,7 +570,7 @@ for openpi_key, lerobot_key in [("state", "observation.state"), ("actions", "act
 
 ---
 
-### 4.6 P1: Tokenizer 等价性 — SentencePiece vs HuggingFace
+### 4.6 P1: Tokenizer 等价性 — SentencePiece vs HuggingFace          @#2
 
 **OpenPI**: `tokenizer.py:18-20`
 ```python
@@ -675,7 +675,7 @@ assert openpi_tokens == lerobot_tokens[:openpi_len], "Token mismatch!"
 
 ---
 
-### 4.9 P2: LR Scheduler 初始值
+### 4.9 P2: LR Scheduler 初始值          @#2
 
 **OpenPI**: `optimizer.py:26`
 ```python
@@ -778,7 +778,7 @@ for observation, actions in loader:
 
 ---
 
-### 4.15 P3: Seed
+### 4.15 P3: Seed          @#2
 
 **OpenPI**: `seed=42`
 **LeRobot**: `seed=1000`（默认）

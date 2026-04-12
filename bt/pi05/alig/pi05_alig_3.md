@@ -724,7 +724,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 ### 5.1 P0: Critical — 必须修复以实现 L1 等价
 
-#### P0-1: Weight Decay (1e-10 vs 0.01)
+#### P0-1: Weight Decay (1e-10 vs 0.01)          @#2
 
 | 项目 | OpenPI JAX | LeRobot |
 |------|-----------|---------|
@@ -795,7 +795,7 @@ EMA 需要存储全部参数的额外拷贝:
 - **影响**: 增强提升泛化能力，对最终部署成功率有显著影响
 - **修复**: 实现等价的 PyTorch 增强（见 Section 10）
 
-#### P1-4: Batch Size (64 vs 默认)
+#### P1-4: Batch Size (64 vs 默认)          @#2
 
 - OpenPI: `batch_size=64`，无梯度累积
 - LeRobot: 需根据 GPU 内存设置，可能需要梯度累积
@@ -813,7 +813,7 @@ EMA 需要存储全部参数的额外拷贝:
 
 - 实际数据中 `q99 - q01 >> 1e-6`，差异可忽略
 
-#### P2-2: Normalization Stats 对齐     @#data_convert
+#### P2-2: Normalization Stats 对齐     @#data_convert          @#2
 
 - OpenPI: `assets/r1_pro_data_convert_chassis/norm_stats.json`
 - LeRobot: `dataset.meta.stats`

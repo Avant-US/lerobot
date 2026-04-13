@@ -142,7 +142,6 @@ nohup accelerate launch \
     --wandb.enable=true \
     --wandb.project=${PRJNAME} \
     --wandb.disable_artifact=true \
-    --wandb.name=${RUNNAME} \
     --job_name=${RUNNAME} \
     --rename_map='{"observation.images.head_rgb":"observation.images.base_0_rgb","observation.images.left_wrist_rgb":"observation.images.left_wrist_0_rgb","observation.images.right_wrist_rgb":"observation.images.right_wrist_0_rgb"}'  \
   > ${LOG_NAME} 2>&1 &

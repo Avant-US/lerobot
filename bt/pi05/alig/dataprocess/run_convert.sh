@@ -2,7 +2,7 @@
 # R1 Pro 数据集转换为 LeRobot v3.0 格式 + Pi0.5 兼容性验证
 #
 # 用法:
-#   bash bt/pi05/alig/data/run_convert.sh [--forward-pass] [--norm-stats-path]
+#   bash bt/pi05/alig/dataprocess/run_convert.sh [--forward-pass] [--norm-stats-path]
 #
 # 选项:
 #   --forward-pass  运行 Level 3 前向传播验证 (需要 GPU)

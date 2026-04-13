@@ -8,11 +8,11 @@
   Level 3: 前向传播 — 加载 PI05Policy，运行 forward pass（需要 GPU，--run-forward-pass）
 
 用法:
-  python bt/pi05/alig/data/verify_pi05.py \
-      --dataset-dir ./bt/pi05/alig/data/r1_pro_test_data_v30
+  python bt/pi05/alig/dataprocess/verify_pi05.py \
+      --dataset-dir ./bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 
-  python bt/pi05/alig/data/verify_pi05.py \
-      --dataset-dir ./bt/pi05/alig/data/r1_pro_chassis_v30 \
+  python bt/pi05/alig/dataprocess/verify_pi05.py \
+      --dataset-dir ./bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
       --run-forward-pass \
       --pretrained-path lerobot/pi05_base \
       --num-steps 2
@@ -209,6 +209,8 @@ def level3_forward_pass(
 
     bootstrap_lerobot_policies_package()
 
+    from lerobot.datasets.factory import resolve_delta_timestamps
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.configs.types import NormalizationMode
     from lerobot.policies.pi05.configuration_pi05 import PI05Config
     from lerobot.policies.pi05.modeling_pi05 import PI05Policy
@@ -227,7 +229,6 @@ def level3_forward_pass(
     from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
     from transformers import AutoTokenizer
 
-    dataset = context["dataset"]
     ds_meta = context["ds_meta"]
     config = context["config"]
 
@@ -282,10 +283,22 @@ def level3_forward_pass(
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,
     )
 
+    # Mirror the real training input path:
+    # PI05 forward expects action chunks of length `chunk_size`, not a single-step action.
+    repo_id = f"local/{dataset_dir.name}"
+    delta_timestamps = resolve_delta_timestamps(config_with_device, ds_meta)
+    forward_dataset = LeRobotDataset(repo_id, root=str(dataset_dir), delta_timestamps=delta_timestamps)
+    forward_loader = torch.utils.data.DataLoader(forward_dataset, batch_size=1, shuffle=False)
+    forward_iter = iter(forward_loader)
+
     # 5. 运行 forward pass
     policy.train()
     for step in range(num_steps):
-        sample = dataset[step % len(dataset)]
+        try:
+            sample = next(forward_iter)
+        except StopIteration:
+            forward_iter = iter(forward_loader)
+            sample = next(forward_iter)
         batch = preprocessor(sample)
 
         autocast_dtype = torch.bfloat16 if device == "cuda" else torch.float32

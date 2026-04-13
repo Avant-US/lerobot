@@ -14,14 +14,14 @@ Norm Stats 双模式:
 
 用法:
   # 模式 1: 精确计算 (默认)
-  python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+  python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
       --input /mnt/r/share/lkx/pi/data/r1_pro_test_data \
-      --output ./bt/pi05/alig/data/r1_pro_test_data_v30
+      --output ./bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 
   # 模式 2: 导入 OpenPI norm_stats.json
-  python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+  python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
       --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-      --output ./bt/pi05/alig/data/r1_pro_chassis_v30 \
+      --output ./bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
       --sample-episodes 10 \
       --norm-stats-path /mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json
 """

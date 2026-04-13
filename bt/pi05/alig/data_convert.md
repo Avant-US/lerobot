@@ -510,7 +510,7 @@ Model Input
 
 ## 7. 使用指南：转换与验证
 
-> **脚本位置**: `bt/pi05/alig/data/`
+> **脚本位置**: `bt/pi05/alig/dataprocess/`
 > **Python 环境**: `/mnt/r/Venv/lerobot-venv/bin/python`
 > **工作目录**: 所有命令均在 `/home/Luogang/SRC/Robot/lerobot` 下执行
 
@@ -518,9 +518,9 @@ Model Input
 
 | 脚本 | 用途 |
 |------|------|
-| `bt/pi05/alig/data/convert_r1pro_to_lerobot.py` | 主转换脚本：列名重命名 + v2.1→v3.0 + 分位数计算 + 基本验证 |
-| `bt/pi05/alig/data/verify_pi05.py` | Pi0.5 兼容性验证：数据加载 / 预处理器 / 前向传播（可选） |
-| `bt/pi05/alig/data/run_convert.sh` | 一键运行：转换两个数据集 + 验证 |
+| `bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py` | 主转换脚本：列名重命名 + v2.1→v3.0 + 分位数计算 + 基本验证 |
+| `bt/pi05/alig/dataprocess/verify_pi05.py` | Pi0.5 兼容性验证：数据加载 / 预处理器 / 前向传播（可选） |
+| `bt/pi05/alig/dataprocess/run_convert.sh` | 一键运行：转换两个数据集 + 验证 |
 
 ### 7.2 快速开始（一键运行）
 
@@ -531,10 +531,10 @@ cd /home/Luogang/SRC/Robot/lerobot
 export PATH="/mnt/r/Venv/lerobot-venv/bin:$PATH"
 
 # 一键转换两个数据集 + Pi0.5 Level 1-2 验证
-bash bt/pi05/alig/data/run_convert.sh
+bash bt/pi05/alig/dataprocess/run_convert.sh
 
 # 如需额外运行 Pi0.5 forward pass 验证（需要 GPU）
-bash bt/pi05/alig/data/run_convert.sh --forward-pass
+bash bt/pi05/alig/dataprocess/run_convert.sh --forward-pass
 ```
 
 一键脚本会依次执行：
@@ -549,9 +549,9 @@ bash bt/pi05/alig/data/run_convert.sh --forward-pass
 ```bash
 cd /home/Luogang/SRC/Robot/lerobot
 
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_test_data \
-    --output bt/pi05/alig/data/r1_pro_test_data_v30
+    --output bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 ```
 
 #### 7.3.2 转换训练集（采样子集，约 3 分钟）
@@ -559,9 +559,9 @@ python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
 训练集有 64 episodes、45GB。先采样 10 个 episodes 验证流程：
 
 ```bash
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-    --output bt/pi05/alig/data/r1_pro_chassis_v30 \
+    --output bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --sample-episodes 10
 ```
 
@@ -570,7 +570,7 @@ python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
 确认流程无误后，转换完整数据集：
 
 ```bash
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /path/to/output/r1_pro_chassis_v30
 ```
@@ -615,8 +615,8 @@ Phase 0+1 (合并执行)          Phase 2                    Phase 2.5          
 #### 7.6.1 Pi0.5 兼容性验证（Level 1+2，无需 GPU）
 
 ```bash
-python bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_test_data_v30
+python bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 ```
 
 验证内容：
@@ -660,8 +660,8 @@ Level 2 通过!
 #### 7.6.2 Pi0.5 前向传播验证（Level 3，需要 GPU）
 
 ```bash
-python bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_test_data_v30 \
+python bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_test_data_v30 \
     --run-forward-pass \
     --pretrained-path lerobot/pi05_base \
     --num-steps 2
@@ -691,7 +691,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 dataset = LeRobotDataset(
     repo_id="local/r1_pro_test_data_v30",
-    root="bt/pi05/alig/data/r1_pro_test_data_v30",
+    root="bt/pi05/alig/dataprocess/r1_pro_test_data_v30",
 )
 
 sample = dataset[0]
@@ -1231,7 +1231,7 @@ for q_key in quantile_keys:
 
 #### 9.4.1 Phase 2.5 实现
 
-`bt/pi05/alig/data/convert_r1pro_to_lerobot.py:285-419`, `phase2_5_compute_quantiles()`:
+`bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py:285-419`, `phase2_5_compute_quantiles()`:
 
 ```python
 # 读取全部数据 parquet，拼接
@@ -1383,7 +1383,7 @@ Pi0.5 将归一化后的 state 离散化为 256 bins: `bin = round((normalized +
 不使用 `--sample-episodes`，转换全部 64 episodes:
 
 ```bash
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /path/to/r1_pro_chassis_full_v30
 ```
@@ -1458,7 +1458,7 @@ def inject_openpi_stats(
 ```python
 inject_openpi_stats(
     openpi_norm_stats_dir=Path("openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis"),
-    lerobot_stats_path=Path("bt/pi05/alig/data/r1_pro_chassis_v30/meta/stats.json"),
+    lerobot_stats_path=Path("bt/pi05/alig/dataprocess/r1_pro_chassis_v30/meta/stats.json"),
 )
 ```
 
@@ -1518,7 +1518,7 @@ def verify_norm_stats_alignment(
 # 使用:
 # verify_norm_stats_alignment(
 #     "openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json",
-#     "bt/pi05/alig/data/r1_pro_chassis_v30/meta/stats.json",
+#     "bt/pi05/alig/dataprocess/r1_pro_chassis_v30/meta/stats.json",
 # )
 ```
 
@@ -1544,7 +1544,7 @@ def verify_norm_stats_alignment(
 ### 9.12 Norm Stats 计算方法优劣深度对比
 
 > **日期**: 2026-04-11
-> **目的**: 深入比较转换脚本 (`bt/pi05/alig/data/`) 的 `np.quantile()` 精确计算方式与 OpenPI 的 5000-bin 直方图近似方式，判断哪种更精确、更利于训练，并据此设计转换脚本的 norm stats 选项。
+> **目的**: 深入比较转换脚本 (`bt/pi05/alig/dataprocess/`) 的 `np.quantile()` 精确计算方式与 OpenPI 的 5000-bin 直方图近似方式，判断哪种更精确、更利于训练，并据此设计转换脚本的 norm stats 选项。
 
 #### 9.12.1 三种计算方法的算法本质
 
@@ -1592,7 +1592,7 @@ def _compute_single_quantile(self, hist, edges, target_count):
 
 **方法 3: 转换脚本 `np.quantile()` — 精确线性插值**
 
-`bt/pi05/alig/data/convert_r1pro_to_lerobot.py:340-342`:
+`bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py:340-342`:
 
 ```python
 concatenated = np.concatenate(all_data[key], axis=0).astype(np.float64)
@@ -1746,12 +1746,12 @@ q01/q99 → 归一化公式 → normalized state → 256-bin 离散化 → text 
 
 ```bash
 # 模式 1: 精确计算 (默认) — 从转换后的数据计算分位数
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /path/to/output_v30
 
 # 模式 2: 导入 OpenPI norm_stats.json
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /path/to/output_v30 \
     --norm-stats-path /mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json
@@ -1868,7 +1868,7 @@ def test_import_norm_stats():
     # 准备: 复制一个已转换的小数据集
     with tempfile.TemporaryDirectory() as tmpdir:
         test_dir = Path(tmpdir) / "test_v30"
-        shutil.copytree("bt/pi05/alig/data/r1_pro_test_data_v30", test_dir)
+        shutil.copytree("bt/pi05/alig/dataprocess/r1_pro_test_data_v30", test_dir)
 
         # 执行导入
         norm_stats_path = Path(
@@ -1896,12 +1896,12 @@ def test_import_norm_stats():
 
 ```bash
 # 1. 模式 A: 精确计算 (全量 64 episodes)
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /tmp/test_compute_v30
 
 # 2. 模式 B: 导入 OpenPI norm stats
-python bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+python bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /tmp/test_import_v30 \
     --norm-stats-path openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json
@@ -1923,7 +1923,7 @@ for key in ['observation.state', 'action']:
 
 ```bash
 # 使用导入模式转换后，运行 Pi0.5 兼容性验证
-python bt/pi05/alig/data/verify_pi05.py \
+python bt/pi05/alig/dataprocess/verify_pi05.py \
     --dataset-dir /tmp/test_import_v30
 # 预期: Level 1+2 全部通过，normalized range 在 [-1, 1] 附近
 ```
@@ -1960,7 +1960,7 @@ for src_k, dst_k in [('state','observation.state'), ('actions','action')]:
 
 ### 10.1 文件清单
 
-`bt/pi05/alig/data/` 目录下有 3 个脚本和 2 个输出目录:
+`bt/pi05/alig/dataprocess/` 目录下有 3 个脚本和 2 个输出目录:
 
 | 文件 | 类型 | 行数 | 说明 |
 |------|------|------|------|
@@ -2093,25 +2093,25 @@ export PYTHON=/mnt/r/Venv/lerobot-venv/bin/python
 cd /home/Luogang/SRC/Robot/lerobot
 
 # 示例 1: 全量转换测试集 (4 episodes, 精确计算分位数)
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_test_data \
-    --output bt/pi05/alig/data/r1_pro_test_data_v30
+    --output bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 
 # 示例 2: 采样 10 episodes + 精确计算分位数
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-    --output bt/pi05/alig/data/r1_pro_chassis_v30 \
+    --output bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --sample-episodes 10
 
 # 示例 3: 采样 10 episodes + 导入 OpenPI norm stats (推荐用于微调对齐)
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-    --output bt/pi05/alig/data/r1_pro_chassis_v30 \
+    --output bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --sample-episodes 10 \
     --norm-stats-path /mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json
 
 # 示例 4: 全量转换训练集 (64 episodes, 精确计算, ~90GB 磁盘)
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
     --output /path/to/r1_pro_chassis_full_v30
 ```
@@ -2178,12 +2178,12 @@ $PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
 
 ```bash
 # Level 1+2 (无需 GPU)
-$PYTHON bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_test_data_v30
+$PYTHON bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 
 # Level 1+2+3 (需要 GPU)
-$PYTHON bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_chassis_v30 \
+$PYTHON bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --run-forward-pass \
     --pretrained-path lerobot/pi05_base \
     --num-steps 2
@@ -2227,16 +2227,16 @@ $PYTHON bt/pi05/alig/data/verify_pi05.py \
 cd /home/Luogang/SRC/Robot/lerobot
 
 # 默认模式: 两个数据集都精确计算分位数，Level 1+2 验证
-bash bt/pi05/alig/data/run_convert.sh
+bash bt/pi05/alig/dataprocess/run_convert.sh
 
 # 导入模式: chassis 数据集使用 OpenPI norm stats
-bash bt/pi05/alig/data/run_convert.sh --norm-stats-path
+bash bt/pi05/alig/dataprocess/run_convert.sh --norm-stats-path
 
 # 完整验证 (含 GPU forward pass)
-bash bt/pi05/alig/data/run_convert.sh --forward-pass
+bash bt/pi05/alig/dataprocess/run_convert.sh --forward-pass
 
 # 导入模式 + 完整验证
-bash bt/pi05/alig/data/run_convert.sh --norm-stats-path --forward-pass
+bash bt/pi05/alig/dataprocess/run_convert.sh --norm-stats-path --forward-pass
 ```
 
 ### 10.5 Norm Stats 双模式详解
@@ -2305,9 +2305,9 @@ bash bt/pi05/alig/data/run_convert.sh --norm-stats-path --forward-pass
 #### 10.6.2 测试 1: 默认转换 — 测试集
 
 ```bash
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_test_data \
-    --output bt/pi05/alig/data/r1_pro_test_data_v30
+    --output bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 ```
 
 预期输出:
@@ -2327,9 +2327,9 @@ Phase 3 验证通过
 #### 10.6.3 测试 2: 默认转换 — 训练集采样
 
 ```bash
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-    --output bt/pi05/alig/data/r1_pro_chassis_v30 \
+    --output bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --sample-episodes 10
 ```
 
@@ -2338,9 +2338,9 @@ $PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
 #### 10.6.4 测试 3: 导入模式转换
 
 ```bash
-$PYTHON bt/pi05/alig/data/convert_r1pro_to_lerobot.py \
+$PYTHON bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py \
     --input /mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis \
-    --output bt/pi05/alig/data/r1_pro_chassis_v30 \
+    --output bt/pi05/alig/dataprocess/r1_pro_chassis_v30 \
     --sample-episodes 10 \
     --norm-stats-path /mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json
 ```
@@ -2365,7 +2365,7 @@ $PYTHON -c "
 import json, numpy as np
 with open('/mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json') as f:
     openpi = json.load(f)['norm_stats']
-with open('bt/pi05/alig/data/r1_pro_chassis_v30/meta/stats.json') as f:
+with open('bt/pi05/alig/dataprocess/r1_pro_chassis_v30/meta/stats.json') as f:
     lr = json.load(f)
 for src_k, dst_k in [('state','observation.state'), ('actions','action')]:
     for q in ['q01','q99']:
@@ -2381,12 +2381,12 @@ for src_k, dst_k in [('state','observation.state'), ('actions','action')]:
 
 ```bash
 # 测试 5: 测试集
-$PYTHON bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_test_data_v30
+$PYTHON bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_test_data_v30
 
 # 测试 6: 训练集
-$PYTHON bt/pi05/alig/data/verify_pi05.py \
-    --dataset-dir bt/pi05/alig/data/r1_pro_chassis_v30
+$PYTHON bt/pi05/alig/dataprocess/verify_pi05.py \
+    --dataset-dir bt/pi05/alig/dataprocess/r1_pro_chassis_v30
 ```
 
 预期输出:
@@ -2412,13 +2412,13 @@ Level 2 通过!
 
 ```bash
 # 精确计算模式: 运行测试 1+2+5+6
-bash bt/pi05/alig/data/run_convert.sh
+bash bt/pi05/alig/dataprocess/run_convert.sh
 
 # 导入模式: 运行测试 1+3+5+6
-bash bt/pi05/alig/data/run_convert.sh --norm-stats-path
+bash bt/pi05/alig/dataprocess/run_convert.sh --norm-stats-path
 
 # 含 GPU 验证
-bash bt/pi05/alig/data/run_convert.sh --forward-pass
+bash bt/pi05/alig/dataprocess/run_convert.sh --forward-pass
 ```
 
 ### 10.7 输出目录结构

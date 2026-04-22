@@ -333,7 +333,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if raw_path.exists():
             from safetensors.torch import load_file
 
-            raw_params = load_file(str(raw_path), device=str(policy.device))
+            raw_params = load_file(str(raw_path), device=str(next(unwrapped.parameters()).device))
             with torch.no_grad():
                 for name, param in unwrapped.named_parameters():
                     if name in raw_params:
@@ -344,7 +344,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if ema_path.exists() and hasattr(unwrapped, '_ema_params'):
             from safetensors.torch import load_file
 
-            unwrapped._ema_params = load_file(str(ema_path), device=str(policy.device))
+            unwrapped._ema_params = load_file(str(ema_path), device=str(next(unwrapped.parameters()).device))
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())

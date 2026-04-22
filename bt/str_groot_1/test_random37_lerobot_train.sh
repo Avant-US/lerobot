@@ -50,8 +50,8 @@ JOB_NAME="${JOB_NAME:-str_groot_libero_random37_cli}"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 OUTPUT_DIR="${OUTPUT_DIR:-${OUTPUT_ROOT}/${RUN_ID}}"
 
-if [ -x "$REPO_ROOT/lerobot-venv/bin/python" ]; then
-  PYTHON_BIN="$REPO_ROOT/lerobot-venv/bin/python"
+if [ -x "/mnt/r/Venv/lerobot-venv/bin/python" ]; then
+  PYTHON_BIN="/mnt/r/Venv/lerobot-venv/bin/python"
 else
   PYTHON_BIN="python3"
 fi

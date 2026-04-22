@@ -24,26 +24,9 @@ VENV_PATH="/mnt/r/Venv/lerobot-venv"
 RAW_DATA="/mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis"
 # 输出到 /mnt/r (大容量)，然后创建本地 symlink
 # (v2.1→v3.0 转换需要两份副本同时存在，本地磁盘空间不够)
-OUTPUT_DATA_ACTUAL="/mnt/r/DATA/PI/r1_pro_data_convert_chassis_v3_oldnorm"
-
+OUTPUT_DATA_ACTUAL="/mnt/r/DATA/PI//r1_pro_data_convert_chassis_v3_newnorm"
 OUTPUT_DATA="${OUTPUT_DATA_ACTUAL}"
-NORM_STATS="/mnt/r/share/lkx/pi/openpi/assets/pi05_r1pro_chassis/r1_pro_data_convert_chassis/norm_stats.json"
 CONVERT_SCRIPT="${LEROBOT_ROOT}/bt/pi05/alig/dataprocess/convert_r1pro_to_lerobot.py"
-
-# ── 解析参数 ──────────────────────────────────────────────────────────
-SAMPLE_ARGS=""
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --sample)
-            SAMPLE_ARGS="--sample-episodes $2"
-            shift 2
-            ;;
-        *)
-            echo "未知参数: $1"
-            exit 1
-            ;;
-    esac
-done
 
 # ── 环境检查 ──────────────────────────────────────────────────────────
 echo "=========================================="
@@ -53,8 +36,6 @@ echo ""
 echo "  虚拟环境:    ${VENV_PATH}"
 echo "  源数据:      ${RAW_DATA}"
 echo "  输出目录:    ${OUTPUT_DATA}"
-echo "  Norm Stats:  ${NORM_STATS}"
-echo "  采样参数:    ${SAMPLE_ARGS:-全部 episodes}"
 echo ""
 
 # 检查虚拟环境
@@ -66,12 +47,6 @@ fi
 # 检查源数据
 if [ ! -d "${RAW_DATA}" ]; then
     echo "ERROR: 源数据目录不存在: ${RAW_DATA}"
-    exit 1
-fi
-
-# 检查 norm_stats
-if [ ! -f "${NORM_STATS}" ]; then
-    echo "ERROR: norm_stats.json 不存在: ${NORM_STATS}"
     exit 1
 fi
 
@@ -107,9 +82,7 @@ cd "${LEROBOT_ROOT}"
 
 python "${CONVERT_SCRIPT}" \
     --input "${RAW_DATA}" \
-    --output "${OUTPUT_DATA_ACTUAL}" \
-    --norm-stats-path "${NORM_STATS}" \
-    ${SAMPLE_ARGS}
+    --output "${OUTPUT_DATA_ACTUAL}"
 
 # # 创建 symlink 到本地路径
 # mkdir -p "$(dirname "${OUTPUT_DATA}")"

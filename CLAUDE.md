@@ -103,3 +103,6 @@ Uses **draccus** (pinned v0.10.0) for dataclass-based configs with CLI override 
 - **Import style**: isort via Ruff with `combine-as-imports`, `lerobot` as known first-party
 - **Quote style**: double quotes
 - **Type checking**: MyPy enabled for `envs`, `configs`, `optim`, `model`, `cameras`, `motors`, `transport` modules; other modules have `ignore_errors = true`
+
+## Design Overview
+请参考 LeRobot 的论文 `@bt/docs/bt/ov/LeRobot: An Open-Source Library for End-to-End Robot Learning.pdf`, 参考 LeRobot 的官网 https://huggingface.co/docs/lerobot/main/en/index, 参考 @bt/docs/bt/ov/ 中的各个md文档, 参考 @bt/docs/ 中的各个md文档, 参考 @bt/ 中的各个md文档, 也可参考网上与 LeRobot 的设计相关的文章与讨论. 重要的是要以深入分析本地的 LeRobot 代码库 @lerobot (/home/Luogang/SRC/Robot/lerobot)为基础 , 对 LeRobot 的设计与架构进行分析, 生成一份描述 LeRobot 的设计与架构的技术文档, 文档要紧密结合机器人行业, 要考虑到软件工程的方方面面, 要写得比现有的@bt/docs/bt/ov/lrb_arch_cc.md要好(比如考虑它所没考虑到的,想得更周全,方案比它的好), 要图文并茂(比如要有架构图,各种UML图,mermaid等等). 文档写到 @bt/docs/bt/ov/lrb_arch_cc2.md 中.

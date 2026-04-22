@@ -22,6 +22,8 @@
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
 # ── 路径配置 ──────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LEROBOT_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -31,14 +33,14 @@ PRJNAME="pi05_r1pro_chassis_alig_oldnorm"
 RUNNAME="R1"
 OUTPUTBASE="/mnt/r/CKPT/VLA/PI"
 
-DATA_DIR="/mnt/r/share/lkx/pi/data/r1_pro_data_convert_chassis_v3_oldnorm"
+DATA_DIR="/mnt/r/DATA/PI/r1_pro_data_convert_chassis_v3_oldnorm"
 OUTPUT_DIR="${OUTPUTBASE}/${PRJNAME}/${RUNNAME}"
 LOG_DIR="${OUTPUTBASE}/consologs/${PRJNAME}"
 LOG_NAME="${LOG_DIR}/${RUNNAME}.log"
 
 # ── 默认参数 (严格对齐 CLI 覆盖) ──────────────────────────────────────
 NUM_GPUS=8
-EFFECTIVE_BATCH_SIZE=256    # CLI: --batch_size 256
+EFFECTIVE_BATCH_SIZE=512    # CLI: --batch_size 128*4=64*8
 STEPS=100000                # CLI: --num_train_steps 100000
 SEED=42
 KEEP_PERIOD=2500            # CLI: --keep_period 2500
@@ -93,17 +95,17 @@ if [ ! -f "${VENV_PATH}/bin/activate" ]; then
 fi
 
 if [ ! -d "${LOG_DIR}" ]; then
-    echo "ERROR: 日志目录不存在: ${LOG_DIR}"
+    echo "创建日志目录: ${LOG_DIR}"
     mkdir -p ${LOG_DIR}
 fi
 
 if [ ! -f "${LOG_NAME}" ]; then
-    echo "ERROR: 日志文件不存在: ${LOG_NAME}"
+    echo "创建日志文件: ${LOG_NAME}"
     touch ${LOG_NAME}
 fi
 
 if [ ! -d "${DATA_DIR}" ] || [ ! -f "${DATA_DIR}/meta/info.json" ]; then
-    echo "ERROR: 数据集不存在。请先运行 prepare_data.sh"
+    echo "ERROR: 数据集不存在。请先运行 prepare_data*.sh"
     exit 1
 fi
 
@@ -121,6 +123,8 @@ nohup accelerate launch \
     --num_processes=${NUM_GPUS} \
     --multi_gpu \
     -m lerobot.scripts.lerobot_train \
+    --resume=true \
+    --config_path="${OUTPUT_DIR}/checkpoints/last/pretrained_model/train_config.json" \
     --dataset.repo_id=local/r1_pro_chassis_v30 \
     --dataset.root="${DATA_DIR}" \
     --policy.path=lerobot/pi05_base \
@@ -135,7 +139,7 @@ nohup accelerate launch \
     --steps=${STEPS} \
     --seed=${SEED} \
     --log_freq=100 \
-    --save_freq=500 \
+    --save_freq=1000 \
     --eval_freq=-1 \
     --num_workers=2 \
     --output_dir="${OUTPUT_DIR}" \
@@ -147,7 +151,9 @@ nohup accelerate launch \
   > ${LOG_NAME} 2>&1 &
 
 TRAIN_PID=$!
+sleep 3
 echo "训练已在后台启动，PID=${TRAIN_PID}，日志：${LOG_NAME} , 输出目录：${OUTPUT_DIR}"
+touch ${OUTPUT_DIR}/${RUNNAME}_${TRAIN_PID}.pid
 # # ── Checkpoint 清理 (keep_period) ────────────────────────────────────
 # if [ ${TRAIN_EXIT_CODE} -eq 0 ] && [ "${KEEP_PERIOD}" -gt 0 ]; then
 #     echo ""

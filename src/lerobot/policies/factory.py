@@ -35,6 +35,7 @@ from lerobot.policies.groot2.configuration_groot import GrootConfig as Groot2Con
 from lerobot.policies.str_groot.configuration_str_groot import StrGrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.dm0.configuration_dm0 import DM0Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -104,6 +105,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "dm0":
+        from lerobot.policies.dm0.modeling_dm0 import DM0Policy
+
+        return DM0Policy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
@@ -178,6 +183,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "dm0":
+        return DM0Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -359,6 +366,14 @@ def make_pre_post_processors(
         from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
 
         processors = make_pi05_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, DM0Config):
+        from lerobot.policies.dm0.processor_dm0 import make_dm0_pre_post_processors
+
+        processors = make_dm0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

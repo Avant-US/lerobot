@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -172,18 +171,9 @@ ERROR_MSG = "Error: unexpected input/output"
 N_COLOR_CHANNELS = 3
 
 
-# config
-@dataclass
+# config (not a Python @dataclass: field order conflicts with PretrainedConfig + init=False fields)
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
-    backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
-
-    action_head_cfg: dict = field(init=False, metadata={"help": "Action head configuration."})
-
-    action_horizon: int = field(init=False, metadata={"help": "Action horizon."})
-
-    action_dim: int = field(init=False, metadata={"help": "Action dimension."})
-    compute_dtype: str = field(default="float32", metadata={"help": "Compute dtype."})
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

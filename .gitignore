@@ -183,3 +183,10 @@ outputs/
 outputs_*/
 logs/
 *-venv
+
+# Checkpoints
+checkpoints/
+outputs/
+logs/
+wandb/
+norm_stats/

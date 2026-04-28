@@ -174,9 +174,6 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument("--ema-decay", type=float, default=None, help="EMA decay(0<decay<1). None = disabled.")
-    if p.ema_decay is not None:
-        if p.ema_decay <= 0 or p.ema_decay >= 1:
-            raise ValueError("--ema-decay must be between 0 and 1.")
 
     return p.parse_args()
 

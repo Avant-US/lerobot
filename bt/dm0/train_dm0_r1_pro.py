@@ -173,6 +173,11 @@ def parse_args() -> argparse.Namespace:
         help="只组装配置，不实际启动训练.",
     )
 
+    p.add_argument("--ema-decay", type=float, default=None, help="EMA decay(0<decay<1). None = disabled.")
+    if p.ema_decay is not None:
+        if p.ema_decay <= 0 or p.ema_decay >= 1:
+            raise ValueError("--ema-decay must be between 0 and 1.")
+
     return p.parse_args()
 
 
@@ -196,6 +201,7 @@ def _build_phase1_policy(args: argparse.Namespace) -> DM0Config:
         scheduler_decay_steps=args.steps,
         scheduler_decay_lr=args.decay_lr,
         push_to_hub=False,
+        ema_decay=args.ema_decay,
         device=args.device,
     )
 
@@ -215,6 +221,7 @@ def _build_phase2_policy(args: argparse.Namespace) -> DM0Config:
         scheduler_decay_steps=args.steps,
         scheduler_decay_lr=args.decay_lr,
         push_to_hub=False,
+        ema_decay=args.ema_decay,
         device=args.device,
     )
     cfg.pretrained_path = str(Path(args.phase1_ckpt).expanduser())

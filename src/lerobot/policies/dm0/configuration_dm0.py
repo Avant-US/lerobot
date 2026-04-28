@@ -66,6 +66,8 @@ class DM0Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30000
     scheduler_decay_lr: float = 2.5e-6
 
+    ema_decay: float | None = None # EMA decay.None = disabled.
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.n_action_steps > self.chunk_size:

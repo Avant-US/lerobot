@@ -106,11 +106,12 @@ def save_checkpoint(
     if hasattr(policy, '_swap_to_ema') and hasattr(policy, '_ema_params') and policy._ema_params is not None:
         ema_backup = policy._swap_to_ema()
 
-    policy.save_pretrained(pretrained_dir)
-
-    # Restore training params after saving
-    if ema_backup is not None and hasattr(policy, '_restore_from_backup'):
-        policy._restore_from_backup(ema_backup)
+    try:
+        policy.save_pretrained(pretrained_dir)
+    finally:
+        # Restore training params after saving EMA weights
+        if ema_backup is not None and hasattr(policy, '_restore_from_backup'):
+            policy._restore_from_backup(ema_backup)
 
     cfg.save_pretrained(pretrained_dir)
     if cfg.peft is not None:

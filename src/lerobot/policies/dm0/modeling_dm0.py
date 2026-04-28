@@ -215,6 +215,10 @@ class DM0Policy(PreTrainedPolicy):
             for p in self.dm0_model.model.mm_projector.parameters():
                 p.requires_grad = False
 
+        # EMA 状态（延迟初始化，在第一次 update() 时填充）
+        self._ema_params: dict[str, torch.Tensor] | None = None
+        self._ema_active: bool = False
+
         self.reset()
 
     @classmethod
@@ -435,6 +439,64 @@ class DM0Policy(PreTrainedPolicy):
         loss = out.loss
         return loss, {"action_loss": float(loss.detach())}
 
+    def _init_ema(self):
+        """初始化 EMA 影子参数为当前可训练参数的拷贝。
+
+        延迟到第一次 update() 调用时执行，确保 PEFT/DDP 包装已完成，参数名稳定。
+        对应 OpenPI: train.py:113 — ema_params = params（初始同源）
+        """
+        self._ema_params = {}
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                self._ema_params[name] = param.data.clone()
+
+    def update(self):
+        """每个优化器步后调用，更新 EMA 影子参数。
+
+        对应 OpenPI: train.py:169-175
+        公式: ema = decay * ema + (1 - decay) * param
+        """
+        if self.config.ema_decay is None:
+            return
+
+        # 延迟初始化：首次调用时创建 EMA 影子参数
+        if self._ema_params is None:
+            self._init_ema()
+
+        decay = self.config.ema_decay
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if param.requires_grad and name in self._ema_params:
+                    self._ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
+
+    def _swap_to_ema(self) -> dict[str, torch.Tensor] | None:
+        """将模型参数替换为 EMA 值，返回原始参数备份。
+
+        使用 _ema_active 标志防止嵌套调用（select_action 调用 predict_action_chunk）。
+
+        对应 OpenPI: checkpoints.py:145-152 中保存 EMA 参数的逻辑。
+        """
+        if self._ema_params is None or self._ema_active:
+            return None
+        backup = {}
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if name in self._ema_params:
+                    backup[name] = param.data.clone()
+                    param.data.copy_(self._ema_params[name])
+        self._ema_active = True
+        return backup
+
+    def _restore_from_backup(self, backup: dict[str, torch.Tensor] | None):
+        """从备份恢复模型参数（EMA 推理后还原为训练参数）。"""
+        if backup is None:
+            return
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if name in backup:
+                    param.data.copy_(backup[name])
+        self._ema_active = False
+
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
         images, image_masks = self._prepare_images(batch)
@@ -467,12 +529,17 @@ class DM0Policy(PreTrainedPolicy):
         return actions[..., : self._original_action_dim]
 
     def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        if len(self._action_queue) == 0:
-            chunk = self.predict_action_chunk(batch)
-            n = min(self.config.n_action_steps, chunk.shape[1])
-            for i in range(n):
-                self._action_queue.append(chunk[:, i])
-        return self._action_queue.popleft()
+        self.eval()
+        backup = self._swap_to_ema()
+        try:
+            if len(self._action_queue) == 0:
+                chunk = self.predict_action_chunk(batch)
+                n = min(self.config.n_action_steps, chunk.shape[1])
+                for i in range(n):
+                    self._action_queue.append(chunk[:, i])
+            return self._action_queue.popleft()
+        finally:
+            self._restore_from_backup(backup)
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         """Default PEFT targets for DM0: LoRA on the ViT attention out-projection.

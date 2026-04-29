@@ -121,6 +121,15 @@ def update_policy(
     # Use accelerator's backward method
     accelerator.backward(loss)
 
+    # # DEBUG: 看 LoRA 是否真的拿到了 grad
+    # if accelerator.is_main_process:
+    #     trainable = [(n, p) for n, p in policy.named_parameters() if p.requires_grad]
+    #     with_grad = [(n, p) for n, p in trainable if p.grad is not None]
+    #     nonzero = [(n, p) for n, p in with_grad if p.grad.abs().sum().item() > 0]
+    #     print(f"trainable={len(trainable)}, with_grad={len(with_grad)}, nonzero_grad={len(nonzero)}")
+    #     if trainable and not nonzero:
+    #         print("  sample trainable name:", trainable[0][0])
+
     # Clip gradients if specified
     if grad_clip_norm > 0:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)

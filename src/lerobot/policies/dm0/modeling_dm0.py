@@ -43,6 +43,124 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 logger = logging.getLogger(__name__)
 
 
+def _patch_pe_self_attention_for_lora() -> None:
+    """Make dexbotic PE ViT's ``SelfAttention.forward`` go through ``self.out_proj(x)``.
+
+    Upstream dexbotic ``pe_model.SelfAttention.forward`` ends with::
+
+        return F.linear(attn, self.out_proj.weight, self.out_proj.bias)
+
+    which pulls the bare ``weight`` / ``bias`` parameters and sidesteps the module's
+    ``__call__``. After PEFT wraps ``out_proj`` with a ``LoraLinear``, the LoRA branch
+    (``base + lora_B(lora_A(x)) * scaling``) lives inside that module's ``forward``;
+    the ``F.linear(..., m.weight, m.bias)`` form silently bypasses the LoRA contribution
+    AND prevents autograd from registering ``lora_A`` / ``lora_B`` as forward dependencies,
+    so their ``.grad`` stays ``None`` (manifesting as ``train/grad_norm == 0`` and a flat
+    loss curve).
+
+    Switching the last line to ``self.out_proj(attn)`` is mathematically identical when
+    ``out_proj`` is a plain ``nn.Linear`` (``Linear.forward`` just calls
+    ``F.linear(x, self.weight, self.bias)``), and routes correctly through PEFT when it
+    isn't. Hence safe to apply unconditionally — phase-1 training, dexbotic-native
+    inference, and any non-LoRA code path are all numerically unchanged.
+
+    Applied at module-import time so any caller that touches this file (training,
+    eval, third-party scripts) gets the fix automatically. Idempotent.
+    """
+    import torch.nn.functional as F  # noqa: WPS433 (deliberate local import; keeps module import cheap)
+    from einops import rearrange  # noqa: WPS433
+    from dexbotic.model.modules.mm_vision.pe import pe_model
+
+    if getattr(pe_model.SelfAttention.forward, "_lora_patched", False):
+        return
+
+    def forward(self, x, grid_hw):
+        _, _, embed_dim = x.shape
+        proj = F.linear(x, self.in_proj_weight, self.in_proj_bias)
+        proj = (
+            proj.unflatten(-1, (3, embed_dim))
+            .unsqueeze(0)
+            .transpose(0, -2)
+            .squeeze(-2)
+            .contiguous()
+        )
+        q, k, v = proj[0], proj[1], proj[2]
+        q = rearrange(q, "b s (h d) -> b h s d", h=self.num_heads)
+        k = rearrange(k, "b s (h d) -> b h s d", h=self.num_heads)
+        v = rearrange(v, "b s (h d) -> b h s d", h=self.num_heads)
+        q, k = self.rope(q, k, grid_hw=grid_hw)
+        attn = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=self.scale
+        )
+        attn = rearrange(attn, "b h s d -> b s (h d)")
+        return self.out_proj(attn)
+
+    forward._lora_patched = True  # type: ignore[attr-defined]
+    pe_model.SelfAttention.forward = forward
+
+
+def _patch_pe_transformer_grad_ckpt() -> None:
+    """Wrap each PE ``ResidualAttentionBlock`` in ``torch.utils.checkpoint.checkpoint``.
+
+    HF's ``PreTrainedModel.gradient_checkpointing_enable()`` (called on ``dm0_model`` in
+    :class:`DM0Policy.__init__`) only propagates to submodules that inherit from
+    ``PreTrainedModel`` and implement the corresponding hook. The dexbotic PE
+    ``Transformer`` is a plain ``nn.Module`` with no built-in gradient-checkpointing
+    support and no ``checkpoint(...)`` calls in its forward, so before this patch the
+    ViT was never checkpointed.
+
+    With phase-1 / fully-frozen ViT this was harmless (autograd sees no trainable params
+    inside the ViT and skips the activation save entirely). With phase-2 LoRA — once
+    :func:`_patch_pe_self_attention_for_lora` makes the LoRA branch actually participate
+    in forward — every ViT layer's activations have to be retained for backward, which
+    blows up memory by ~10× (e.g. ``num_images=3`` × ``728²/14² = 8112`` tokens per
+    sample × 24 layers × ``4×width`` MLP intermediates). On 140 GB H200 this OOMs at the
+    LoRA forward inside the very first batch.
+
+    This patch wraps each resblock in non-reentrant checkpoint so block-internal
+    activations are recomputed during backward instead of stored. ``use_reentrant=False``
+    is required because the resblock's input typically has ``requires_grad=False`` (image
+    features come from a non-leaf tensor that doesn't require grad in the outer graph)
+    while the *inner* LoRA params do require grad — the older reentrant checkpointing
+    sees no input requiring grad and prunes the whole subgraph from backward, which would
+    nullify LoRA gradients again.
+
+    Only enabled when ``self.training`` and grad mode is on, so ``select_action`` /
+    ``inference_action`` (which run under ``torch.no_grad()``) don't pay the recompute
+    cost. Trade-off vs. baseline: forward goes through the resblocks twice per step (once
+    cached inputs + once recomputed during backward), so wallclock per step grows by
+    roughly ``+ViT_forward_time / total_step_time`` (typically 20-30% in this setup).
+
+    Idempotent. Applied at module-import time alongside the LoRA-targeting patch.
+    """
+    from torch.utils.checkpoint import checkpoint  # noqa: WPS433
+    from dexbotic.model.modules.mm_vision.pe import pe_model
+
+    if getattr(pe_model.Transformer.forward, "_grad_ckpt_patched", False):
+        return
+
+    def forward(self, x, grid_hw, layer_idx: int = -1):
+        stop_idx = (self.layers + layer_idx) % self.layers
+        # Only checkpoint when we actually need backward; saves the recompute pass on
+        # eval / inference where ``select_action`` runs under ``torch.no_grad()``.
+        use_ckpt = self.training and torch.is_grad_enabled()
+        for i, r in enumerate(self.resblocks):
+            if use_ckpt:
+                x = checkpoint(r, x, grid_hw, use_reentrant=False)
+            else:
+                x = r(x, grid_hw=grid_hw)
+            if i == stop_idx:
+                break
+        return x
+
+    forward._grad_ckpt_patched = True  # type: ignore[attr-defined]
+    pe_model.Transformer.forward = forward
+
+
+_patch_pe_self_attention_for_lora()
+_patch_pe_transformer_grad_ckpt()
+
+
 DM0_ARCH_CONFIG_FILENAME = "dm0_arch_config.json"
 _DEXBOTIC_DM0_MODEL_TYPE = "dexbotic_dm0"
 
@@ -476,6 +594,8 @@ class DM0Policy(PreTrainedPolicy):
 
         对应 OpenPI: checkpoints.py:145-152 中保存 EMA 参数的逻辑。
         """
+        if self.config.ema_decay is None:
+            return None
         if self._ema_params is None or self._ema_active:
             return None
         backup = {}
@@ -542,20 +662,30 @@ class DM0Policy(PreTrainedPolicy):
             self._restore_from_backup(backup)
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
-        """Default PEFT targets for DM0: LoRA on the ViT attention out-projection.
+        """Default PEFT targets for DM0: LoRA on ViT attention ``out_proj`` and MLP ``c_fc`` / ``c_proj``.
 
-        Mirrors the dexbotic ``r1_pro_dm0_freeze_lora.py`` recipe (``r=16, alpha=32, dropout=0.05``,
-        targets ``["out_proj", "c_fc", "c_proj"]``): on HF ``CLIPVisionModel`` /
-        ``SiglipVisionModel`` only ``out_proj`` actually exists, so we intentionally restrict the
-        regex to that. The regex is anchored at the ``mm_vision_tower`` sub-tree so we never
-        accidentally LoRA-wrap the LLM's attention.
+        Mirrors the dexbotic ``r1_pro_dm0_freeze_lora.py`` recipe verbatim
+        (``r=16, alpha=32, dropout=0.05``, targets ``["out_proj", "c_fc", "c_proj"]``).
+        These names are specific to the dexbotic ``PEVisionTower`` (``transformer.resblocks.*``);
+        HF ``CLIPVisionModel`` / ``SiglipVisionModel`` use a different naming scheme but the
+        DM0-base checkpoint we ship with always uses PE (``mm_vision_tower="pe_lang_l14_728"``),
+        so this is safe.
 
-        ``lora_alpha`` / ``lora_dropout`` are not exposed via :class:`PeftConfig` so we bake them in
-        here; override by editing this method or by passing a fully-formed ``peft_config`` to
+        Note: ``out_proj`` only contributes to the LoRA forward thanks to
+        :func:`_patch_pe_self_attention_for_lora` (applied at module import). Without that patch
+        dexbotic's ``SelfAttention.forward`` calls ``F.linear(attn, self.out_proj.weight, ...)``
+        directly, which silently bypasses the LoRA branch (and was the root cause of the
+        ``grad_norm == 0`` flat loss curve).
+
+        The regex is anchored at the ``mm_vision_tower`` sub-tree so we never accidentally
+        LoRA-wrap the LLM's attention.
+
+        ``lora_alpha`` / ``lora_dropout`` are not exposed via :class:`PeftConfig` so we bake them
+        in here; override by editing this method or by passing a fully-formed ``peft_config`` to
         :meth:`wrap_with_peft`.
         """
         target_modules = (
-            r"dm0_model\.model\.mm_vision_tower\.vision_tower\..*\.out_proj"
+            r"dm0_model\.model\.mm_vision_tower\.vision_tower\..*\.(out_proj|c_fc|c_proj)"
         )
         return {
             "target_modules": target_modules,

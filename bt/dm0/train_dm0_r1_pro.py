@@ -29,10 +29,20 @@ LoRA 的 ``alpha=32 / dropout=0.05`` 写死在 ``DM0Policy._get_default_peft_tar
 
 from __future__ import annotations
 
+import os
+import torch
+_local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+if torch.cuda.is_available():
+  torch.cuda.set_device(_local_rank)
+
 import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
+
+print(f"[rank={_local_rank}] "
+    f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}, "
+    f"device_count={torch.cuda.device_count()}, current={torch.cuda.current_device()}")
 
 from lerobot.configs.default import DatasetConfig, PeftConfig, WandBConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -55,7 +65,7 @@ DEFAULT_CHUNK_SIZE = 50
 DEFAULT_LR = 1e-4
 DEFAULT_DECAY_LR = 1e-5
 DEFAULT_WARMUP_STEPS = 1000
-DEFAULT_STEPS = 30000
+DEFAULT_STEPS = 6000
 DEFAULT_SAVE_FREQ = 2500
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_NUM_WORKERS = 4
@@ -240,7 +250,10 @@ def build_train_config(args: argparse.Namespace) -> TrainPipelineConfig:
         policy_cfg = _build_phase2_policy(args)
 
     job_name = args.job_name or f"dm0_{args.task}"
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Prefer ``DM0_RUN_ID`` from the launcher env so every accelerate rank gets the *same*
+    # output_dir (otherwise rank 0's wandb.init() races other ranks' cfg.validate(),
+    # tripping "output_dir already exists" on retries within the same second).
+    run_id = os.environ.get("DM0_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(args.output_root) / f"{args.task}-{run_id}"
 
     save_freq = max(1, min(args.save_freq, args.steps))

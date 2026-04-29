@@ -300,6 +300,21 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
+        elif isinstance(policy_cfg, DM0Config):
+            # DM0 handles (un)normalization internally via its own ``norm_stats.json``
+            # (loaded by the model, not by a pipeline step). The saved DM0 pipeline
+            # therefore doesn't contain ``normalizer_processor`` / ``unnormalizer_processor``
+            # steps, so the generic overrides injected by ``lerobot_train.train`` would
+            # trip ``_validate_overrides_used``. Drop them here while keeping the
+            # device / rename overrides that DO match real DM0 steps.
+            preprocessor_overrides = dict(kwargs.get("preprocessor_overrides") or {})
+            preprocessor_overrides.pop("normalizer_processor", None)
+            kwargs["preprocessor_overrides"] = preprocessor_overrides
+
+            postprocessor_overrides = dict(kwargs.get("postprocessor_overrides") or {})
+            postprocessor_overrides.pop("unnormalizer_processor", None)
+            kwargs["postprocessor_overrides"] = postprocessor_overrides
+
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,

@@ -56,20 +56,21 @@ export DM0_RUN_ID="${DM0_RUN_ID:-$(date +%Y%m%d_%H%M%S)_$$}"
 
 # Image augmentation is ON by default and matches dexbotic policy_dm0 / policy_color_dm0.
 # Pass --no-aug to disable, or tune via --aug-prob / --aug-size.
-# "${LAUNCHER[@]}" bt/dm0/train_dm0_r1_pro.py \
-#   --task=train \
-#   --dataset-repo="local/r1_pro_chassis_v3" \
-#   --dataset-root="${DATASET_PATH}" \
-#   --norm-stats-path="${NORM_STATS}" \
-#   --dm0-base="${DM0_BASE}" \
-#   --wandb \
-#   --wandb-project="dm0_r1_pro_chassis_v3_lerobot"
-
 "${LAUNCHER[@]}" bt/dm0/train_dm0_r1_pro.py \
-  --task=lora_train \
+  --task=train \
   --dataset-repo="local/r1_pro_chassis_v3" \
   --dataset-root="${DATASET_PATH}" \
   --norm-stats-path="${NORM_STATS}" \
-  --phase1-ckpt="./outputs/bt/dm0/train-20260427_053604/checkpoints/last/pretrained_model" \
+  --dm0-base="${DM0_BASE}" \
+  --ema-decay=0.99 \
   --wandb \
-  --wandb-project="dm0_r1_pro_chassis_v3_lerobot_lora_vit"
+  --wandb-project="dm0_r1_pro_chassis_v3_lerobot"
+
+# "${LAUNCHER[@]}" bt/dm0/train_dm0_r1_pro.py \
+#   --task=lora_train \
+#   --dataset-repo="local/r1_pro_chassis_v3" \
+#   --dataset-root="${DATASET_PATH}" \
+#   --norm-stats-path="${NORM_STATS}" \
+#   --phase1-ckpt="./outputs/bt/dm0/train-20260427_053604/checkpoints/last/pretrained_model" \
+#   --wandb \
+#   --wandb-project="dm0_r1_pro_chassis_v3_lerobot_lora_vit"

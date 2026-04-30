@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import defaultdict
@@ -29,6 +30,49 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.dm0.modeling_dm0 import DM0Policy
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+
+def _sanitize_hf_cache_env() -> None:
+    """Unset ``HF_HOME`` / ``HF_DATASETS_CACHE`` if unusable as a cache directory.
+
+    Covers: plain file at path, **broken symlink** (``exists()`` is false but path
+    still blocks ``mkdir``), symlink to non-directory.
+    """
+    for key in ("HF_DATASETS_CACHE", "HF_HOME"):
+        v = os.environ.get(key)
+        if not v:
+            continue
+        p = Path(v).expanduser()
+        if p.is_dir():
+            continue
+        if p.exists() or p.is_symlink():
+            del os.environ[key]
+
+
+def _ensure_hf_datasets_cache() -> None:
+    """Make HF ``datasets`` parquet cache dirs exist.
+
+    ``Dataset.from_parquet`` (used when loading ``meta/episodes``) writes under
+    ``HF_DATASETS_CACHE`` or ``HF_HOME/datasets``. If that tree cannot be created,
+    ``LeRobotDatasetMetadata`` treats load as failed and may call the Hub for
+    ``repo_id`` — which breaks for purely local ids like ``local/...``.
+
+    Drops bad env on ``OSError`` (e.g. ``HF_HOME`` is a file / dangling symlink).
+    """
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        p = Path(hf_home).expanduser()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            (p / "datasets").mkdir(parents=True, exist_ok=True)
+        except OSError:
+            os.environ.pop("HF_HOME", None)
+    dsc = os.environ.get("HF_DATASETS_CACHE")
+    if dsc:
+        try:
+            Path(dsc).expanduser().mkdir(parents=True, exist_ok=True)
+        except OSError:
+            os.environ.pop("HF_DATASETS_CACHE", None)
 
 
 def _action_to_numpy(item: dict, action_dim: int) -> np.ndarray:
@@ -139,6 +183,101 @@ def _episode_relative_indices(dataset: LeRobotDataset) -> list[list[int]]:
     return out
 
 
+def _unwrap_dm0(policy: object) -> DM0Policy:
+    """Return the underlying ``DM0Policy`` even if ``policy`` is a ``PeftModel`` wrapper."""
+    inner = policy
+    for _ in range(4):
+        if isinstance(inner, DM0Policy):
+            return inner
+        inner = getattr(inner, "base_model", inner)
+        inner = getattr(inner, "model", inner)
+    if isinstance(inner, DM0Policy):
+        return inner
+    raise TypeError(f"Could not unwrap a DM0Policy from {type(policy).__name__}")
+
+
+def _resolve_peft_base_dir(
+    base: str,
+    *,
+    adapter_dir: Path,
+    cli_override: str | None,
+) -> Path:
+    """Resolve ``adapter_config.json`` ``base_model_name_or_path`` to an existing directory.
+
+    ``base`` is often **relative to the training cwd** (typically ``lerobot/``). We try the
+    obvious candidates so the script works whether you run from ``shallowMerge/`` or ``lerobot/``.
+    """
+    if cli_override:
+        p = Path(cli_override).expanduser().resolve()
+        if not p.is_dir():
+            raise FileNotFoundError(f"--peft-base-checkpoint not a directory: {p}")
+        return p
+    bp = Path(base).expanduser()
+    if bp.is_absolute():
+        if not bp.is_dir():
+            raise FileNotFoundError(
+                f"PEFT base_model_name_or_path does not exist: {bp}"
+            )
+        return bp.resolve()
+    here = Path(__file__).resolve()
+    repo_root = here.parents[3]
+    lerobot_root = here.parents[2]
+    candidates = [
+        adapter_dir / bp,
+        Path.cwd() / bp,
+        lerobot_root / bp,
+        repo_root / bp,
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c.resolve()
+    raise FileNotFoundError(
+        "PEFT base checkpoint not found. Tried:\n  - "
+        + "\n  - ".join(str(c) for c in candidates)
+        + f"\nadapter_config.json declared base={base!r}. "
+        "Pass --peft-base-checkpoint <abs path> to override."
+    )
+
+
+def _load_policy(
+    checkpoint: str,
+    *,
+    peft_base_override: str | None,
+    merge_lora: bool,
+) -> object:
+    ckpt_path = Path(checkpoint).expanduser()
+    if not ckpt_path.is_dir():
+        raise FileNotFoundError(
+            f"--checkpoint must be an existing directory; got {checkpoint!r} (resolved: "
+            f"{ckpt_path.resolve()}). LeRobot DM0 ckpts typically live at "
+            "<run_dir>/checkpoints/last/pretrained_model."
+        )
+    adapter_cfg_path = ckpt_path / "adapter_config.json"
+    if not adapter_cfg_path.is_file():
+        return DM0Policy.from_pretrained(str(ckpt_path), strict=False)
+
+    from peft import PeftConfig, PeftModel
+
+    peft_config = PeftConfig.from_pretrained(str(ckpt_path))
+    base_dir = _resolve_peft_base_dir(
+        peft_config.base_model_name_or_path,
+        adapter_dir=ckpt_path,
+        cli_override=peft_base_override,
+    )
+    print(f"[peft] base = {base_dir}")
+    print(f"[peft] adapter = {ckpt_path}")
+    base_policy = DM0Policy.from_pretrained(str(base_dir), strict=False)
+    policy = PeftModel.from_pretrained(base_policy, str(ckpt_path), config=peft_config)
+    if merge_lora:
+        merged = policy.merge_and_unload()
+        if isinstance(merged, DM0Policy):
+            print("[peft] merged LoRA weights into base policy.")
+            return merged
+        print("[peft] merge_and_unload returned a wrapper; falling back to PeftModel.")
+        return policy
+    return policy
+
+
 def _build_policy_batch(
     policy: DM0Policy,
     items: list[dict],
@@ -158,16 +297,17 @@ def _build_policy_batch(
 
 
 def _predict_batch(
-    policy: DM0Policy,
+    policy: object,
+    dm0: DM0Policy,
     device: torch.device,
     dataset: LeRobotDataset,
     rel_indices: list[int],
 ) -> tuple[np.ndarray, float]:
     items = [dataset[i] for i in rel_indices]
-    batch = _build_policy_batch(policy, items, device)
+    batch = _build_policy_batch(dm0, items, device)
     t0 = time.monotonic()
     with torch.inference_mode():
-        actions = policy.predict_action_chunk(batch)
+        actions = dm0.predict_action_chunk(batch)
     dt_ms = (time.monotonic() - t0) * 1000.0 / max(len(rel_indices), 1)
     arr = actions.detach().float().cpu().numpy()
     return arr, dt_ms
@@ -180,17 +320,19 @@ def evaluate_checkpoint(
     episodes: list[list[int]],
     device: torch.device,
 ) -> dict:
-    policy = DM0Policy.from_pretrained(
+    policy = _load_policy(
         checkpoint,
-        strict=False,
+        peft_base_override=args.peft_base_checkpoint,
+        merge_lora=args.merge_lora,
     )
+    dm0 = _unwrap_dm0(policy)
     policy.eval()
     policy.to(device)
 
-    action_dim = int(policy._original_action_dim)
+    action_dim = int(dm0._original_action_dim)
     probe_idx = episodes[0][0]
     probe_item = dataset[probe_idx]
-    for k in policy._image_keys():
+    for k in dm0._image_keys():
         if k not in probe_item:
             raise KeyError(
                 f"Policy expects visual key {k!r} missing in dataset frame. "
@@ -218,7 +360,7 @@ def evaluate_checkpoint(
         for i in range(0, len(eval_positions), args.batch_size):
             pos_batch = eval_positions[i : i + args.batch_size]
             rel_batch = [rel_list[p] for p in pos_batch]
-            pred_arr, infer_ms = _predict_batch(policy, device, dataset, rel_batch)
+            pred_arr, infer_ms = _predict_batch(policy, dm0, device, dataset, rel_batch)
             infer_times_ms.append(infer_ms)
             if pred_arr.ndim != 3:
                 raise RuntimeError(f"Unexpected prediction shape: {pred_arr.shape}")
@@ -253,7 +395,8 @@ def evaluate_checkpoint(
     group_mse = _group_mse(per_dim_mse)
     avg_infer_ms = float(np.mean(infer_times_ms)) if infer_times_ms else float("nan")
 
-    ns = policy.config.norm_stats_path
+    ns = dm0.config.norm_stats_path
+    is_peft = type(policy).__name__ != "DM0Policy"
 
     print(f"\n--- Results for {checkpoint} ---")
     print(f"Overall MSE:        {overall_mse:.6f}")
@@ -271,6 +414,7 @@ def evaluate_checkpoint(
         "dataset_repo": args.dataset_repo,
         "dataset_root": str(Path(args.dataset_root).resolve()) if args.dataset_root else None,
         "checkpoint": checkpoint,
+        "is_peft_adapter": bool(is_peft),
         "norm_stats": ns if ns else None,
         "num_episodes": len(episodes),
         "num_samples": total_samples,
@@ -340,11 +484,44 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Pass download_videos=False to LeRobotDataset (only if frames already local).",
     )
+    p.add_argument(
+        "--peft-base-checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Override the base policy directory for a LoRA checkpoint. "
+            "If unset, the script reads adapter_config.json::base_model_name_or_path "
+            "and tries common candidates."
+        ),
+    )
+    p.add_argument(
+        "--merge-lora",
+        action="store_true",
+        help="If set, call PeftModel.merge_and_unload() before eval (faster inference, "
+             "behaviour ~ identical to the wrapper at inference).",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    _sanitize_hf_cache_env()
+    dataset_root: Path | None = None
+    if args.dataset_root:
+        dataset_root = Path(args.dataset_root).expanduser().resolve()
+        if not dataset_root.is_dir():
+            raise FileNotFoundError(f"--dataset-root is not a directory: {dataset_root}")
+        # Keep parquet builder cache next to data unless the user already set HF_*.
+        os.environ.setdefault("HF_DATASETS_CACHE", str(dataset_root / "_hf_datasets_parquet_cache"))
+    _ensure_hf_datasets_cache()
+    if dataset_root is not None:
+        fallback = dataset_root / "_hf_datasets_parquet_cache"
+        dsc = os.environ.get("HF_DATASETS_CACHE")
+        dsc_path = Path(dsc).expanduser() if dsc else None
+        if not dsc or dsc_path is None or (dsc_path.exists() and not dsc_path.is_dir()):
+            os.environ["HF_DATASETS_CACHE"] = str(fallback)
+            fallback.mkdir(parents=True, exist_ok=True)
+
     device = torch.device(args.device)
 
     dataset = LeRobotDataset(

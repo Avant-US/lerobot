@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import builtins
-import inspect
 import json
 import logging
 import shutil
@@ -17,6 +16,7 @@ from typing import Any
 import packaging
 import safetensors
 import torch
+import transformers
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor
@@ -268,9 +268,18 @@ class DM0Policy(PreTrainedPolicy):
         tok_path = config.tokenizer_name_or_path or config.model_name_or_path
         # Avoid ``AutoTokenizer`` here: it may load the folder's ``config.json`` as ``AutoConfig`` and
         # trigger dexbotic ``DM0Config`` default-init bugs. DM0 checkpoints ship ``Qwen2Tokenizer``.
+        #
+        # ``fix_mistral_regex``: transformers>=5.0 inspects local ``config.json`` and, when it lacks a
+        # ``transformers_version`` field (true for both DM0-base ``model_type=dexbotic_dm0`` and our
+        # saved policy ``type=dm0``), heuristically classifies the tokenizer as Mistral and warns
+        # unless the flag is passed explicitly. The fix it offers replaces the ``pre_tokenizer`` with
+        # a Mistral-shaped Split regex, which would silently change Qwen2 tokenization. Pass ``False``
+        # so transformers takes neither the warn branch nor the patch branch -- pre-tokenizer stays
+        # the original Qwen2 one. ``False`` is only accepted on transformers>=5.0; older versions
+        # don't have this code path at all.
         tok_kw: dict[str, Any] = {}
-        if "fix_mistral_regex" in inspect.signature(Qwen2Tokenizer.from_pretrained).parameters:
-            tok_kw["fix_mistral_regex"] = True
+        if packaging.version.parse(transformers.__version__) >= packaging.version.parse("5.0.0"):
+            tok_kw["fix_mistral_regex"] = False
         self.tokenizer = Qwen2Tokenizer.from_pretrained(str(tok_path), **tok_kw)
         # Cap padded length to match dexbotic training (DM0Tokenization pads to
         # ``tokenizer.model_max_length``); without this Qwen2's default 32k+ blows up attention memory.

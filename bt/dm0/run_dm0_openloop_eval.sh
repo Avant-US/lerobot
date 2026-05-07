@@ -21,4 +21,4 @@ fi
 python lerobot/bt/dm0/dm0_openloop_eval.py \
   --dataset-repo local/r1_pro_chassis_v3_test \
   --dataset-root /mnt/r/share/zwy/datasets/r1_pro_test_data_v3 \
-  --checkpoint "${MERGE_ROOT}/lerobot/outputs/bt/dm0/train-20260427_053604/checkpoints/012500/pretrained_model"
+  --checkpoint "${MERGE_ROOT}/lerobot/outputs/bt/dm0/full_train-20260430_060223_3365070/checkpoints/010000/pretrained_model"

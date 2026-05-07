@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""DM0 R1-Pro 两阶段训练入口（freeze_vit / lora_vit）.
+"""DM0 R1-Pro 多模式训练入口（freeze_vit / lora_vit / full_train）.
 
 LeRobot 版本的 ``dexbotic/playground/benchmarks/real/r1_pro_dm0_freeze_lora.py``：
 
 - ``--task=train``      ：第 1 阶段，冻结 ViT，微调 LLM (+ projector / action head)。
 - ``--task=lora_train`` ：第 2 阶段，冻结整模型，在 ViT 的 ``out_proj`` 上挂 LoRA。
+- ``--task=full_train`` ：全量微调，不冻结任何子模块（也不挂 PEFT）。
+                           可从 ``--dm0-base`` 起训，也可用 ``--phase1-ckpt`` 续训。
 
 LoRA 的 ``alpha=32 / dropout=0.05`` 写死在 ``DM0Policy._get_default_peft_targets``
 里（``PeftConfig`` 没暴露这两个字段），与 dexbotic 配方对齐；这里只暴露 ``--lora-r``。
@@ -23,6 +25,21 @@ LoRA 的 ``alpha=32 / dropout=0.05`` 写死在 ``DM0Policy._get_default_peft_tar
         --task=lora_train \\
         --dataset-repo=your-org/r1_pro_chassis_v3_lerobot \\
         --phase1-ckpt=./outputs/bt/dm0/<phase1_run>/checkpoints/last/pretrained_model
+
+    # full fine-tune from DM0-base (nothing frozen)
+    accelerate launch bt/dm0/train_dm0_r1_pro.py \\
+        --task=full_train \\
+        --dataset-repo=your-org/r1_pro_chassis_v3_lerobot \\
+        --norm-stats-path=./norm_stats/r1_pro_chassis_v3.json \\
+        --dm0-base=./checkpoints/DM0-base \\
+        --lr=1e-5
+
+    # full fine-tune continuing from a phase-1 checkpoint (三段式：freeze → full)
+    accelerate launch bt/dm0/train_dm0_r1_pro.py \\
+        --task=full_train \\
+        --dataset-repo=your-org/r1_pro_chassis_v3_lerobot \\
+        --phase1-ckpt=./outputs/bt/dm0/<phase1_run>/checkpoints/last/pretrained_model \\
+        --lr=1e-5
 
 ``norm_stats.json`` 由 ``examples/dm0/compute_norm_stats.py`` 离线生成。
 """
@@ -74,16 +91,20 @@ DEFAULT_LORA_R = 16
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="DM0 R1-Pro phased training (freeze ViT → LoRA on ViT).",
+        description="DM0 R1-Pro multi-mode training (freeze ViT / LoRA on ViT / full fine-tune).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # task / phase ------------------------------------------------------------
     p.add_argument(
         "--task",
-        choices=["train", "lora_train"],
+        choices=["train", "lora_train", "full_train"],
         default="train",
-        help="`train`: phase-1 freeze ViT.  `lora_train`: phase-2 LoRA on ViT.",
+        help=(
+            "`train`: phase-1 freeze ViT.  "
+            "`lora_train`: phase-2 LoRA on ViT.  "
+            "`full_train`: 全量微调，不冻结任何子模块；可选 --phase1-ckpt 续训。"
+        ),
     )
 
     # dataset -----------------------------------------------------------------
@@ -95,17 +116,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--dm0-base",
         default="./checkpoints/DM0-base",
-        help="dexbotic 原生 DM0 权重目录（仅 phase-1 使用）.",
+        help="dexbotic 原生 DM0 权重目录（phase-1 / full_train-from-base 使用）.",
     )
     p.add_argument(
         "--phase1-ckpt",
         default=None,
-        help="phase-2 必填：phase-1 输出的 .../checkpoints/last/pretrained_model .",
+        help=(
+            ".../checkpoints/last/pretrained_model 路径。"
+            "phase-2 必填；full_train 可选（提供则从该 ckpt 续训，否则从 --dm0-base 起训）。"
+        ),
     )
     p.add_argument(
         "--norm-stats-path",
         default=None,
-        help="dexbotic 风格 norm_stats.json；phase-1 必填，phase-2 一般继承自 phase-1 ckpt.",
+        help=(
+            "dexbotic 风格 norm_stats.json；"
+            "phase-1 / 从 base 起训的 full_train 必填，从 ckpt 续训时一般继承自 ckpt。"
+        ),
     )
 
     # policy hyper-params (mirror r1_pro_dm0_freeze_lora.py) ------------------
@@ -237,6 +264,43 @@ def _build_phase2_policy(args: argparse.Namespace) -> DM0Config:
     return cfg
 
 
+def _build_full_policy(args: argparse.Namespace) -> DM0Config:
+    """全量微调：ViT / LLM / projector / action expert 全部解冻，不挂 PEFT。
+
+    支持两种起点：
+      * ``--dm0-base`` 起训：必须同时提供 ``--norm-stats-path``。
+      * ``--phase1-ckpt`` 续训：复用 ckpt 内置的 norm_stats（也可用 ``--norm-stats-path`` 覆盖）。
+    """
+    if not args.phase1_ckpt and not args.norm_stats_path:
+        raise ValueError(
+            "full_train 需要 --norm-stats-path（从 --dm0-base 起训）"
+            "或 --phase1-ckpt（从 phase-1 检查点续训）至少其一。"
+        )
+
+    cfg = DM0Config(
+        model_name_or_path=args.dm0_base,
+        norm_stats_path=args.norm_stats_path,
+        freeze_vision_encoder=False,
+        train_expert_only=False,
+        gradient_checkpointing=True,
+        num_images=args.num_images,
+        original_action_dim=args.original_action_dim,
+        non_delta_mask=list(args.non_delta_mask),
+        chunk_size=args.chunk_size,
+        n_action_steps=args.chunk_size,
+        optimizer_lr=args.lr,
+        scheduler_warmup_steps=args.warmup_steps,
+        scheduler_decay_steps=args.steps,
+        scheduler_decay_lr=args.decay_lr,
+        push_to_hub=False,
+        ema_decay=args.ema_decay,
+        device=args.device,
+    )
+    if args.phase1_ckpt:
+        cfg.pretrained_path = str(Path(args.phase1_ckpt).expanduser())
+    return cfg
+
+
 def _build_peft(args: argparse.Namespace) -> PeftConfig | None:
     if args.task != "lora_train":
         return None
@@ -246,8 +310,12 @@ def _build_peft(args: argparse.Namespace) -> PeftConfig | None:
 def build_train_config(args: argparse.Namespace) -> TrainPipelineConfig:
     if args.task == "train":
         policy_cfg = _build_phase1_policy(args)
-    else:
+    elif args.task == "lora_train":
         policy_cfg = _build_phase2_policy(args)
+    elif args.task == "full_train":
+        policy_cfg = _build_full_policy(args)
+    else:
+        raise ValueError(f"未知 --task={args.task!r}")
 
     job_name = args.job_name or f"dm0_{args.task}"
     # Prefer ``DM0_RUN_ID`` from the launcher env so every accelerate rank gets the *same*
@@ -346,6 +414,12 @@ def main() -> None:
         cfg.policy.scheduler_decay_lr,
         cfg.policy.scheduler_warmup_steps,
         cfg.policy.scheduler_decay_steps,
+    )
+    LOGGER.info(
+        "freeze: vision_encoder=%s, expert_only=%s | init_from=%s",
+        cfg.policy.freeze_vision_encoder,
+        cfg.policy.train_expert_only,
+        cfg.policy.pretrained_path or cfg.policy.model_name_or_path,
     )
     if cfg.peft is not None:
         LOGGER.info("PEFT: method=%s, r=%d (alpha/dropout from DM0Policy default targets)",

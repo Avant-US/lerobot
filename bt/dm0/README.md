@@ -1,6 +1,7 @@
-# DM0 R1-Pro 两阶段训练（freeze ViT → LoRA on ViT）
+# DM0 R1-Pro 多模式训练（freeze ViT / LoRA on ViT / full fine-tune）
 
-把 `dexbotic/playground/benchmarks/real/r1_pro_dm0_freeze_lora.py` 移植到 LeRobot。
+把 `dexbotic/playground/benchmarks/real/r1_pro_dm0_freeze_lora.py` 移植到 LeRobot，
+并额外补了一档 dexbotic 那边没有的"全量微调"。
 
 - 入口：`bt/dm0/train_dm0_r1_pro.py`
 - 一键脚本：`bt/dm0/run_dm0_freeze_vit.sh`（设好 HF cache、自动跑一次 norm_stats，再 launch 训练）
@@ -8,12 +9,16 @@
 - Policy：`lerobot.policies.dm0.DM0Policy` / `DM0Config`
 - norm_stats：`examples/dm0/compute_norm_stats.py`（生成 dexbotic 风格 q01/q99 归一化）
 
-## 训练阶段
+## 训练模式
 
 | `--task` | 含义 | 大致策略 |
 |----------|------|----------|
 | `train` | phase-1：冻结 ViT，微调 LLM (+ projector / action head) | `DM0Config(freeze_vision_encoder=True)` |
 | `lora_train` | phase-2：冻结整模型，在 ViT 的 `out_proj` 上挂 LoRA | `TrainPipelineConfig.peft = PeftConfig(method_type="LORA", r=16)` + `DM0Policy.wrap_with_peft` |
+| `full_train` | 全量微调：ViT / LLM / projector / action expert 全开，不挂 PEFT | `DM0Config(freeze_vision_encoder=False, train_expert_only=False)` |
+
+`full_train` 既可以从 `--dm0-base` 起训，也可以用 `--phase1-ckpt` 接 phase-1 的输出做
+"freeze → full" 三段式微调。
 
 LoRA 的 `target_modules`、`lora_alpha=32`、`lora_dropout=0.05` 写在
 `DM0Policy._get_default_peft_targets`，跟 dexbotic 配方一致；想改就改那个方法
@@ -48,8 +53,10 @@ LoRA 的 `target_modules`、`lora_alpha=32`、`lora_dropout=0.05` 写在
      --max-action-dim 32 --max-state-dim 32
    ```
 
-   生成的 JSON 路径作为 `--norm-stats-path` 传给训练入口（phase-1 必填，phase-2
-   一般继承自 phase-1 ckpt，也可显式覆盖）。
+   生成的 JSON 路径作为 `--norm-stats-path` 传给训练入口：
+   - `train` (phase-1) **必填**；
+   - `full_train` 从 `--dm0-base` 起训时**必填**，从 `--phase1-ckpt` 续训时一般继承自 ckpt（可显式覆盖）；
+   - `lora_train` (phase-2) 一般继承自 phase-1 ckpt，也可显式覆盖。
 
 ## 快速开始
 
@@ -89,6 +96,36 @@ accelerate launch bt/dm0/train_dm0_r1_pro.py \
 `wrap_with_peft` 会把 base 模型的所有参数都冻住，所以 phase-2 不需要再指定
 `--policy.freeze_vision_encoder` 之类的标志；只暴露 `--lora-r`（默认 16）。
 
+### 手动 full_train：全量微调（什么都不冻）
+
+从 `DM0-base` 起训：
+
+```bash
+accelerate launch bt/dm0/train_dm0_r1_pro.py \
+  --task=full_train \
+  --dataset-repo=local/r1_pro_chassis_v3 \
+  --dataset-root=/path/to/dataset \
+  --norm-stats-path=./norm_stats/r1_pro_chassis_v3.json \
+  --dm0-base=./checkpoints/DM0-base \
+  --lr=1e-5
+```
+
+或从 phase-1 的 ckpt 续训（先 freeze ViT 训 LLM，再放开 ViT 一起小学习率全量微调，
+是常见的三段式做法，norm_stats 自动从 ckpt 继承）：
+
+```bash
+accelerate launch bt/dm0/train_dm0_r1_pro.py \
+  --task=full_train \
+  --dataset-repo=local/r1_pro_chassis_v3 \
+  --dataset-root=/path/to/dataset \
+  --phase1-ckpt=outputs/bt/dm0/train-<YYYYMMDD_HHMMSS>/checkpoints/last/pretrained_model \
+  --lr=1e-5
+```
+
+> ⚠️ ViT 解冻后显存 / 梯度 / Adam 状态都会涨，`--lr` 默认值（`1e-4`）通常太大，
+> 建议调到 `1e-5 ~ 2.5e-5`；OOM 就把 `--batch-size` 减半（`gradient_checkpointing=True`
+> 已经默认开）。
+
 ### dry-run（只组装配置，不启训练）
 
 ```bash
@@ -98,6 +135,9 @@ python bt/dm0/train_dm0_r1_pro.py --task=train \
   --norm-stats-path=./norm_stats/r1_pro_chassis_v3.json \
   --dry-run
 ```
+
+`main()` 启动时会打印一行 `freeze: vision_encoder=... expert_only=... | init_from=...`，
+可以先用 `--dry-run` 确认这一行符合预期再正式开训。
 
 ## 图像增强（默认开启）
 
@@ -193,6 +233,9 @@ echo $! > /mnt/g/CKPT/${BTPRJNAME}_${BTJOBNAME}.pid
 Phase-2 把 `--task=train` 换成 `--task=lora_train`，并加
 `--phase1-ckpt=.../checkpoints/last/pretrained_model` 即可。
 
+`full_train` 同理：`--task=full_train`，配 `--lr=1e-5`，要么保留 `--norm-stats-path`
++ `--dm0-base` 从头训，要么换成 `--phase1-ckpt=...` 接续 phase-1。
+
 ## 全部 CLI 参数
 
 ```bash
@@ -210,6 +253,11 @@ python bt/dm0/train_dm0_r1_pro.py --help
   本入口默认 `grad_accum=1`，记录的是单 mini-batch loss，肉眼上更抖但训练是等价的。
   可以用 `accelerate config` 把 `gradient_accumulation_steps` 调到 4，并把
   `--batch-size` 调到 4，复现 dexbotic 的曲线观感。
+- **`full_train` 启动后 loss 直接发散 / NaN**：默认 `--lr=1e-4` 是给 phase-1 freeze ViT
+  调的，ViT 解冻后这个学习率通常太大。改 `--lr=1e-5`（甚至 `5e-6`）+ 适当增大
+  `--warmup-steps`，并优先用 `--phase1-ckpt` 续训而不是从 base 直接全开。
+- **`full_train` OOM**：`gradient_checkpointing` 已经默认开；先把 `--batch-size` 减半，
+  再考虑用 `accelerate config` 配 `gradient_accumulation_steps` 把等效 batch 拉回去。
 
 ## 相关文件
 

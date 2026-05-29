@@ -22,25 +22,27 @@
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=2,3,4,5,6,7
+# Rank 0 can spend many minutes loading parquet from /mnt/g; avoid NCCL store timeout on other ranks.
+# export TORCH_DISTRIBUTED_TIMEOUT=3600
 
 # ── 路径配置 ──────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LEROBOT_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
-VENV_PATH="/mnt/r/Venv/lerobot-venv"
+VENV_PATH="/mnt/r/VENV/lerobot-venv"
 
-PRJNAME="pi05_r1pro_chassis_alig_oldnorm"
+PRJNAME="pi05_r1pro_chassis_alig_newnorm"
 RUNNAME="R1"
 OUTPUTBASE="/mnt/r/CKPT/VLA/PI"
 
-DATA_DIR="/mnt/r/DATA/PI/r1_pro_data_convert_chassis_v3_oldnorm"
+DATA_DIR="/mnt/r/DATA/PI/r1_pro_data_convert_chassis_v3_newnorm"
 OUTPUT_DIR="${OUTPUTBASE}/${PRJNAME}/${RUNNAME}"
-LOG_DIR="${OUTPUTBASE}/consologs/${PRJNAME}"
+LOG_DIR="${OUTPUTBASE}/log/${PRJNAME}"
 LOG_NAME="${LOG_DIR}/${RUNNAME}.log"
 
 # ── 默认参数 (严格对齐 CLI 覆盖) ──────────────────────────────────────
-NUM_GPUS=8
-EFFECTIVE_BATCH_SIZE=512    # CLI: --batch_size 128*4=64*8
+NUM_GPUS=6
+EFFECTIVE_BATCH_SIZE=288    # CLI: --batch_size 128*4=64*8
 STEPS=100000                # CLI: --num_train_steps 100000
 SEED=42
 KEEP_PERIOD=2500            # CLI: --keep_period 2500
@@ -118,13 +120,22 @@ fi
 source "${VENV_PATH}/bin/activate"
 cd "${LEROBOT_ROOT}"
 
+# ── 构建 resume 参数 ─────────────────────────────────────────────────
+RESUME_ARGS=""
+RESUME_CKPT="${OUTPUT_DIR}/checkpoints/last/pretrained_model/train_config.json"
+if [ -f "${RESUME_CKPT}" ]; then
+    echo "发现已有检查点，启用 resume: ${RESUME_CKPT}"
+    RESUME_ARGS="--resume=true --config_path=${RESUME_CKPT}"
+else
+    echo "未发现检查点，从头开始训练"
+fi
+
 # ── 执行训练 ──────────────────────────────────────────────────────────
 nohup accelerate launch \
     --num_processes=${NUM_GPUS} \
     --multi_gpu \
     -m lerobot.scripts.lerobot_train \
-    --resume=true \
-    --config_path="${OUTPUT_DIR}/checkpoints/last/pretrained_model/train_config.json" \
+    ${RESUME_ARGS} \
     --dataset.repo_id=local/r1_pro_chassis_v30 \
     --dataset.root="${DATA_DIR}" \
     --policy.path=lerobot/pi05_base \
@@ -138,7 +149,7 @@ nohup accelerate launch \
     --batch_size=${PER_GPU_BATCH} \
     --steps=${STEPS} \
     --seed=${SEED} \
-    --log_freq=100 \
+    --log_freq=200 \
     --save_freq=1000 \
     --eval_freq=-1 \
     --num_workers=2 \

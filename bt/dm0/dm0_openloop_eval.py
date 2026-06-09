@@ -375,7 +375,14 @@ def evaluate_checkpoint(
             )
             pred_chunks = pred_arr[:, :eval_horizon, :]
             sq = (pred_chunks - gt_chunks) ** 2
-            mse_each = np.mean(sq, axis=(1, 2))
+            
+            # mse_each = np.mean(sq, axis=(1, 2))
+
+            exclude = {14, 15}
+            keep = np.array([i not in exclude for i in range(action_dim)], dtype=bool)
+            sq_kept = sq[:, :, keep]  # shape (B, T, D-2)
+            mse_each = np.mean(sq_kept, axis=(1, 2))
+
             dim_mse_each = np.mean(sq, axis=1)
             all_mse.extend(mse_each.tolist())
             ep_mse_list.extend(mse_each.tolist())

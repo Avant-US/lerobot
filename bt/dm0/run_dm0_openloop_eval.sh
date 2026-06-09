@@ -18,7 +18,18 @@ if [[ -n "${HF_HOME:-}" && -e "$HF_HOME" && ! -d "$HF_HOME" ]]; then
   unset HF_HOME
 fi
 
-python lerobot/bt/dm0/dm0_openloop_eval.py \
+# python lerobot/bt/dm0/dm0_openloop_eval.py \
+#   --dataset-repo local/r1_pro_chassis_v3_test \
+#   --dataset-root /mnt/r/share/zwy/datasets/r1_pro_test_data_v3 \
+#   --checkpoint "${MERGE_ROOT}/lerobot/outputs/bt/dm0/full_train-20260509_094559_2383629/checkpoints/022500/pretrained_model"
+
+python lerobot/bt/dm0/dm0_openloop_policy.py \
+  --checkpoint "${MERGE_ROOT}/lerobot/outputs/bt/dm0_aloha/full_train-20260520_082155_3489023_428317392/checkpoints/010000/pretrained_model" \
   --dataset-repo local/r1_pro_chassis_v3_test \
   --dataset-root /mnt/r/share/zwy/datasets/r1_pro_test_data_v3 \
-  --checkpoint "${MERGE_ROOT}/lerobot/outputs/bt/dm0/full_train-20260430_060223_3365070/checkpoints/010000/pretrained_model"
+  --episode-index 0 \
+  --steps 1000 \
+  --action-horizon 50 \
+  --ylim-min -1.8 \
+  --ylim-max 1.8 \
+  --save-plot dm0_openloop_aloha_10000.png

@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+# DM0 phase-1 (freeze ViT). Run from anywhere:
+#     bash lerobot/bt/dm0/run_dm0_freeze_vit.sh
+#     bash run_dm0_freeze_vit.sh
+#
+# Auto-generates norm_stats.json on first run (DM0 needs dexbotic-style
+# q01/q99 over delta-action chunks; the dataset's `meta/stats.json` is *not*
+# used by DM0, and the one shipped with DM0-base is a [-1,1] placeholder).
+
 set -euo pipefail
 
 export HF_HOME="/mnt/r/share/zwy/.cache/huggingface"
@@ -37,6 +46,10 @@ if [[ "${NUM_GPUS}" -gt 1 ]]; then
   LAUNCHER+=(--multi_gpu)
 fi
 
+# shallowMerge（含 lerobot/ 子目录）。必须用已 resolve 的 SCRIPT_DIR：第 24 行已 cd 到
+# REPO_ROOT，此时 BASH_SOURCE[0] 仍是相对路径 lerobot/bt/dm0/...，再 dirname 会 cd 失败。
+MERGE_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+
 # Generate one shared RUN_ID for *all* ranks. Without this each rank calls
 # datetime.now() independently and they typically share the same second, leading
 # to the same output_dir; rank 0's wandb.init() then mkdirs that dir and the
@@ -47,16 +60,17 @@ export DM0_RUN_ID="${DM0_RUN_ID:-$(date +%Y%m%d_%H%M%S)_$$_${RANDOM}${RANDOM}}"
 
 # Image augmentation is ON by default and matches dexbotic policy_dm0 / policy_color_dm0.
 # Pass --no-aug to disable, or tune via --aug-prob / --aug-size.
+
 "${LAUNCHER[@]}" bt/dm0/train_dm0_r1_pro.py \
   --task=full_train \
   --dataset-repo="local/r1_pro_chassis_v3" \
   --dataset-root="${DATASET_PATH}" \
   --norm-stats-path="${NORM_STATS}" \
-  --dm0-base="${DM0_BASE}" \
+  --phase1-ckpt="${MERGE_ROOT}/lerobot/outputs/bt/dm0/train-20260511_034518_3092778_1356223099/checkpoints/040000/pretrained_model" \
   --ema-decay=0.99 \
-  --steps=30000 \
+  --steps=12000 \
+  --lr=1e-5 \
+  --decay-lr=1e-6 \
   --save-freq=1000 \
-  --lr=5e-6 \
-  --decay-lr=5e-7 \
   --wandb \
-  --wandb-project="dm0_r1_pro_chassis_v3_lerobot"
+  --wandb-project="dm0_r1_pro_chassis_v3_lerobot_phase2_table30_ckpt"

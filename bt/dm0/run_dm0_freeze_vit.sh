@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DATASET_PATH="/mnt/r/share/zwy/datasets/r1_pro_data_convert_chassis_v3_newnorm"
-DM0_BASE="./checkpoints/DM0-base"
+DM0_BASE="/mnt/r/share/zwy/shallowMerge/dexbotic/checkpoints/DM0-table30_plug_in_network_cable"
 NORM_STATS="./norm_stats/r1_pro_chassis_v3.json"
 
 # 1) compute norm_stats.json if missing (one-shot, ~tens of seconds).
@@ -46,13 +46,11 @@ if [[ "${NUM_GPUS}" -gt 1 ]]; then
   LAUNCHER+=(--multi_gpu)
 fi
 
-# Generate one shared RUN_ID for *all* ranks. Without this each rank calls
-# datetime.now() independently and they typically share the same second, leading
-# to the same output_dir; rank 0's wandb.init() then mkdirs that dir and the
-# remaining ranks trip cfg.validate()'s "output_dir already exists" check on a
-# fast retry. Including $$ (launcher PID) makes the id unique even when two
-# launches happen within the same second.
-export DM0_RUN_ID="${DM0_RUN_ID:-$(date +%Y%m%d_%H%M%S)_$$}"
+# One shared RUN_ID for all ranks (set before accelerate so every worker inherits it).
+# Include $$ and bash RANDOM so two launches in the same second do not collide.
+# If you intentionally reuse a run id, ``export DM0_RUN_ID=...`` before this script;
+# to clear a stale id: ``unset DM0_RUN_ID``.
+export DM0_RUN_ID="${DM0_RUN_ID:-$(date +%Y%m%d_%H%M%S)_$$_${RANDOM}${RANDOM}}"
 
 # Image augmentation is ON by default and matches dexbotic policy_dm0 / policy_color_dm0.
 # Pass --no-aug to disable, or tune via --aug-prob / --aug-size.
@@ -63,8 +61,12 @@ export DM0_RUN_ID="${DM0_RUN_ID:-$(date +%Y%m%d_%H%M%S)_$$}"
   --norm-stats-path="${NORM_STATS}" \
   --dm0-base="${DM0_BASE}" \
   --ema-decay=0.99 \
+  --steps=30000 \
+  --save-freq=1000 \
+  --lr=5e-6 \
+  --decay-lr=5e-7 \
   --wandb \
-  --wandb-project="dm0_r1_pro_chassis_v3_lerobot"
+  --wandb-project="dm0_r1_pro_chassis_v3_lerobot_table30_ckpt"
 
 # "${LAUNCHER[@]}" bt/dm0/train_dm0_r1_pro.py \
 #   --task=lora_train \

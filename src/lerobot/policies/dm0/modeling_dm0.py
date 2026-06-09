@@ -17,7 +17,8 @@ import packaging
 import safetensors
 import torch
 import transformers
-from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
+from safetensors.torch import load_file as load_safetensors_file
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor
 from transformers import Qwen2Tokenizer
@@ -173,17 +174,34 @@ def _is_arch_config_only_dir(root: Path) -> bool:
     return root.is_dir() and (root / DM0_ARCH_CONFIG_FILENAME).is_file()
 
 
+def _local_dm0_safetensors_present(root: Path) -> bool:
+    """Single-file or sharded HF-style safetensors next to ``config.json``."""
+    if not root.is_dir():
+        return False
+    if (root / SAFETENSORS_SINGLE_FILE).is_file():
+        return True
+    index = root / SAFETENSORS_INDEX_FILE
+    if not index.is_file():
+        return False
+    try:
+        with index.open() as f:
+            weight_map = json.load(f).get("weight_map") or {}
+        shard_names = set(weight_map.values())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(shard_names) and all((root / name).is_file() for name in shard_names)
+
+
 def _is_dexbotic_native_dir(root: Path) -> bool:
     """Detects a raw dexbotic ``DM0ForCausalLM`` dump (e.g. the published ``DM0-base`` checkpoint).
 
     These dirs ship ``config.json`` with ``model_type == 'dexbotic_dm0'`` plus a ``model.safetensors``
-    whose state-dict keys live directly on the architecture (no ``dm0_model.`` prefix). They must not
-    be re-fed to the LeRobot-policy safetensors loader, which would report every key as
-    missing/unexpected.
+    (or sharded safetensors + index) whose state-dict keys live directly on the architecture (no
+    ``dm0_model.`` prefix). They must not be re-fed to the LeRobot-policy safetensors loader, which would
+    report every key as missing/unexpected.
     """
     cfg = root / "config.json"
-    weights = root / SAFETENSORS_SINGLE_FILE
-    if not (root.is_dir() and cfg.is_file() and weights.is_file()):
+    if not (root.is_dir() and cfg.is_file() and _local_dm0_safetensors_present(root)):
         return False
     if (root / DM0_ARCH_CONFIG_FILENAME).is_file():
         return False
@@ -203,8 +221,9 @@ def _load_dm0_for_causal_lm(model_name_or_path: str, device: str | torch.device)
        init and skip weight loading. Used when the caller is a LeRobot policy ``from_pretrained``
        (the trained weights live in the policy-level ``model.safetensors`` and will be loaded on
        top by the parent ``_load_as_safetensor``).
-    2. dexbotic-native dump (``config.json`` + ``model.safetensors`` without ``dm0_arch_config.json``):
-       build the architecture from ``config.json`` and load the dexbotic weights via safetensors.
+    2. dexbotic-native dump (``config.json`` + ``model.safetensors`` *or* sharded
+       ``model.safetensors.index.json`` + ``model-*-of-*.safetensors``, without ``dm0_arch_config.json``):
+       build the architecture from ``config.json`` and load weights via safetensors.
     3. Fallback: defer to ``DM0ForCausalLM.from_pretrained`` (e.g. HF Hub IDs).
 
     HuggingFace ``from_pretrained`` may call ``DM0Config()`` with no args while diffing defaults,
@@ -221,32 +240,74 @@ def _load_dm0_for_causal_lm(model_name_or_path: str, device: str | torch.device)
         return model
 
     weights = root / SAFETENSORS_SINGLE_FILE
+    index_weights = root / SAFETENSORS_INDEX_FILE
     cfg_path = root / "config.json"
-    if root.is_dir() and cfg_path.is_file() and weights.is_file():
+    if root.is_dir() and cfg_path.is_file() and (weights.is_file() or index_weights.is_file()):
         with cfg_path.open() as f:
             arch_cfg = DexboticDM0ArchConfig(**json.load(f))
         model = DM0ForCausalLM(arch_cfg)
-        load_kwargs: dict[str, Any] = {"strict": False}
         # Load tensors on CPU first to avoid CUDA OOM when the GPU is already occupied, then move the model.
         load_device = "cpu"
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            load_kwargs["device"] = load_device
-        missing, unexpected = load_model_as_safetensor(model, str(weights), **load_kwargs)
-        if unexpected:
-            logger.warning("DM0 dexbotic weight load: %d unexpected key(s), e.g. %s",
-                           len(unexpected), unexpected[:5])
-        if missing:
-            # Buffers / RoPE caches re-created lazily are expected to be missing; only surface
-            # something looks suspicious (a parameter, not a buffer-ish suffix).
-            suspicious = [k for k in missing if not k.endswith((".inv_freq", ".rotary_emb.inv_freq"))]
-            if suspicious:
-                logger.warning("DM0 dexbotic weight load: %d missing key(s), e.g. %s",
-                               len(suspicious), suspicious[:5])
-        if "device" not in load_kwargs:
+        _load_dm0_safetensors_into_model(model, root, load_device)
+        if packaging.version.parse(safetensors.__version__) < packaging.version.parse("0.4.3"):
             model.to(load_device)
         model.to(device)
         return model
     return DM0ForCausalLM.from_pretrained(model_name_or_path)
+
+
+def _load_dm0_safetensors_into_model(model: DM0ForCausalLM, root: Path, load_device: str) -> None:
+    """Load dexbotic checkpoint tensors from a single ``model.safetensors`` or HF-style sharded files."""
+    weights = root / SAFETENSORS_SINGLE_FILE
+    load_kwargs: dict[str, Any] = {"strict": False}
+    if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
+        load_kwargs["device"] = load_device
+
+    if weights.is_file():
+        missing, unexpected = load_model_as_safetensor(model, str(weights), **load_kwargs)
+    else:
+        index_path = root / SAFETENSORS_INDEX_FILE
+        if not index_path.is_file():
+            raise FileNotFoundError(
+                f"Expected {SAFETENSORS_SINGLE_FILE} or {SAFETENSORS_INDEX_FILE} under {root}"
+            )
+        with index_path.open() as f:
+            index_data = json.load(f)
+        weight_map = index_data.get("weight_map")
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise ValueError(f"Invalid or empty weight_map in {index_path}")
+        shard_names = sorted(set(weight_map.values()))
+        file_kw: dict[str, Any] = {}
+        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
+            file_kw["device"] = load_device
+        unexpected_acc: list[str] = []
+        for sname in shard_names:
+            shard_path = root / sname
+            if not shard_path.is_file():
+                raise FileNotFoundError(
+                    f"DM0 safetensors shard listed in index but not found: {shard_path}"
+                )
+            shard_sd = load_safetensors_file(str(shard_path), **file_kw)
+            inc = model.load_state_dict(shard_sd, strict=False)
+            unexpected_acc.extend(inc.unexpected_keys)
+        unexpected = list(dict.fromkeys(unexpected_acc))
+        index_keys = set(weight_map.keys())
+        missing = sorted(set(model.state_dict().keys()) - index_keys)
+
+    if unexpected:
+        logger.warning(
+            "DM0 dexbotic weight load: %d unexpected key(s), e.g. %s",
+            len(unexpected),
+            unexpected[:5],
+        )
+    if missing:
+        suspicious = [k for k in missing if not k.endswith((".inv_freq", ".rotary_emb.inv_freq"))]
+        if suspicious:
+            logger.warning(
+                "DM0 dexbotic weight load: %d missing key(s), e.g. %s",
+                len(suspicious),
+                suspicious[:5],
+            )
 
 
 class DM0Policy(PreTrainedPolicy):
@@ -440,8 +501,40 @@ class DM0Policy(PreTrainedPolicy):
             with open(cfg_path, "w") as f:
                 json.dump(d, f, indent=4)
 
-    def get_optim_params(self) -> dict:
-        return [p for p in self.parameters() if p.requires_grad]
+    def get_optim_params(self):
+        """Return either a flat param list or a list of param groups.
+
+        当 ``config.vit_lr_mult`` 为 ``None`` / 1.0 时返回单组（兼容旧行为）；
+        否则按参数名是否包含 ``mm_vision_tower`` 划分两组：
+          * ``vit``  : ViT 子树下的可训练参数（含 phase2 时挂在 ViT 上的 LoRA）
+          * ``other``: 其它可训练参数（LLM / projector / action expert / ...）
+        每组写入显式 ``lr``，与 ``LambdaLR`` 协作时两组 lr 会同步缩放且比例恒定。
+        """
+        cfg = self.config
+        vit_mult = getattr(cfg, "vit_lr_mult", None)
+
+        trainable = [(n, p) for n, p in self.named_parameters() if p.requires_grad]
+        if vit_mult is None or vit_mult == 1.0:
+            return [p for _, p in trainable]
+
+        base_lr = float(cfg.optimizer_lr)
+        vit_lr = base_lr * float(vit_mult)
+        vit_substr = "mm_vision_tower"
+
+        vit_params = [p for n, p in trainable if vit_substr in n]
+        other_params = [p for n, p in trainable if vit_substr not in n]
+
+        groups: list[dict[str, Any]] = []
+        if other_params:
+            groups.append({"params": other_params, "lr": base_lr, "name": "other"})
+        if vit_params:
+            groups.append({"params": vit_params, "lr": vit_lr, "name": "vit"})
+
+        logger.info(
+            "DM0 optim param groups: other=%d @ lr=%.3e, vit=%d @ lr=%.3e (mult=%.3f)",
+            len(other_params), base_lr, len(vit_params), vit_lr, float(vit_mult),
+        )
+        return groups
 
     def reset(self) -> None:
         self._action_queue.clear()

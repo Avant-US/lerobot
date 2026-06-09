@@ -200,6 +200,19 @@ def parse_args() -> argparse.Namespace:
 
     # output / logging --------------------------------------------------------
     p.add_argument("--output-root", default="outputs/bt/dm0")
+    p.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "输出目录名后缀：<output-root>/<task>-<run-id>。未设置时依次使用环境变量 "
+            "DM0_RUN_ID、或 YYYYMMDD_HHMMSS（同一分钟内多次启动可能冲突，建议用 launch 脚本生成 DM0_RUN_ID）。"
+        ),
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="在已有 output_dir 上续训（目录需含 checkpoint；与 LeRobot TrainPipelineConfig.resume 一致）。",
+    )
     p.add_argument("--job-name", default=None, help="不填则自动生成 dm0_<task>.")
     p.add_argument("--wandb", action="store_true", help="启用 W&B logging.")
     p.add_argument("--wandb-project", default="dm0_r1_pro_chassis_v3")
@@ -211,6 +224,17 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument("--ema-decay", type=float, default=None, help="EMA decay(0<decay<1). None = disabled.")
+
+    p.add_argument(
+        "--vit-lr-mult",
+        type=float,
+        default=None,
+        help=(
+            "ViT 单独 lr 倍率：实际 vit_lr = --lr * --vit-lr-mult。"
+            "None 表示不分组（沿用旧行为）；常用值如 0.1。"
+            "phase1 ViT 全冻结，加了不会出错但无效；phase2 该倍率作用于 LoRA-on-ViT。"
+        ),
+    )
 
     return p.parse_args()
 
@@ -237,6 +261,7 @@ def _build_phase1_policy(args: argparse.Namespace) -> DM0Config:
         push_to_hub=False,
         ema_decay=args.ema_decay,
         device=args.device,
+        vit_lr_mult=args.vit_lr_mult,
     )
 
 
@@ -257,6 +282,7 @@ def _build_phase2_policy(args: argparse.Namespace) -> DM0Config:
         push_to_hub=False,
         ema_decay=args.ema_decay,
         device=args.device,
+        vit_lr_mult=args.vit_lr_mult,
     )
     cfg.pretrained_path = str(Path(args.phase1_ckpt).expanduser())
     if args.norm_stats_path:
@@ -295,6 +321,7 @@ def _build_full_policy(args: argparse.Namespace) -> DM0Config:
         push_to_hub=False,
         ema_decay=args.ema_decay,
         device=args.device,
+        vit_lr_mult=args.vit_lr_mult,
     )
     if args.phase1_ckpt:
         cfg.pretrained_path = str(Path(args.phase1_ckpt).expanduser())
@@ -318,10 +345,10 @@ def build_train_config(args: argparse.Namespace) -> TrainPipelineConfig:
         raise ValueError(f"未知 --task={args.task!r}")
 
     job_name = args.job_name or f"dm0_{args.task}"
-    # Prefer ``DM0_RUN_ID`` from the launcher env so every accelerate rank gets the *same*
-    # output_dir (otherwise rank 0's wandb.init() races other ranks' cfg.validate(),
-    # tripping "output_dir already exists" on retries within the same second).
-    run_id = os.environ.get("DM0_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Prefer ``DM0_RUN_ID`` from the shell launcher so every accelerate rank shares one
+    # ``output_dir``.  Then ``--run-id``.  Last resort: second-resolution timestamp (can
+    # collide if you relaunch twice in the same minute without the env / flag).
+    run_id = os.environ.get("DM0_RUN_ID") or args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(args.output_root) / f"{args.task}-{run_id}"
 
     save_freq = max(1, min(args.save_freq, args.steps))
@@ -336,6 +363,7 @@ def build_train_config(args: argparse.Namespace) -> TrainPipelineConfig:
         peft=_build_peft(args),
         output_dir=output_dir,
         job_name=job_name,
+        resume=args.resume,
         seed=args.seed,
         batch_size=args.batch_size,
         steps=args.steps,
@@ -421,6 +449,13 @@ def main() -> None:
         cfg.policy.train_expert_only,
         cfg.policy.pretrained_path or cfg.policy.model_name_or_path,
     )
+    if cfg.policy.vit_lr_mult is not None:
+        LOGGER.info(
+            "ViT 单独 lr 倍率: vit_lr_mult=%.4f -> vit_lr=%.2e (other_lr=%.2e)",
+            cfg.policy.vit_lr_mult,
+            cfg.policy.optimizer_lr * cfg.policy.vit_lr_mult,
+            cfg.policy.optimizer_lr,
+        )
     if cfg.peft is not None:
         LOGGER.info("PEFT: method=%s, r=%d (alpha/dropout from DM0Policy default targets)",
                     cfg.peft.method_type, cfg.peft.r)

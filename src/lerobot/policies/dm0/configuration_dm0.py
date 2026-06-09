@@ -59,8 +59,12 @@ class DM0Config(PreTrainedConfig):
     optimizer_lr: float = 2.5e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 1e-10
+    optimizer_weight_decay: float = 1e-2
     optimizer_grad_clip_norm: float = 1.0
+    # 给 ViT (mm_vision_tower 子树下的可训练参数) 单独的 lr 倍率：
+    # 实际 vit_lr = optimizer_lr * vit_lr_mult。None 表示不分组（沿用旧行为）。
+    # phase2 的 LoRA 参数也在 mm_vision_tower 子树下，因此该倍率会同样作用于它们。
+    vit_lr_mult: float | None = None
 
     scheduler_warmup_steps: int = 1000
     scheduler_decay_steps: int = 30000
